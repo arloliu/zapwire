@@ -1,0 +1,56 @@
+# golangci-lint configuration (v2 schema). Strategy: broad opt-in for correctness,
+# security and style; narrow only where signal:noise is poor, with a comment per change.
+# Pinned to golangci-lint v2.11.4 (see Makefile GOLANGCI_LINT_VERSION).
+version: "2"
+
+linters:
+  enable:
+    # -- Correctness --
+    - bodyclose
+    - copyloopvar
+    - durationcheck
+    - errname
+    - errorlint
+    - exhaustive
+    - makezero
+    - nilnil
+    - reassign
+    - wastedassign
+    # -- Security --
+    - asasalint
+    - asciicheck
+    - bidichk
+    - gosec
+    # -- Style / readability --
+    - misspell
+    - nakedret
+    - nlreturn
+    - predeclared
+    - unconvert
+    - unparam
+    - usestdlibvars
+    - whitespace
+    # -- Complexity --
+    - cyclop
+  settings:
+    cyclop:
+      max-complexity: 22
+    exhaustive:
+      default-signifies-exhaustive: true
+  exclusions:
+    generated: lax
+    rules:
+      # Generated msgpack code is exempt from style/complexity/security lints.
+      - path: proto_gen\.go
+        linters: [gosec, cyclop, gocritic, unparam, errcheck, govet, staticcheck]
+      # Tests may use fixed-bit conversions and unchecked helpers freely.
+      - path: _test\.go
+        linters: [gosec, errcheck, cyclop, unparam]
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes: [github.com/arloliu/zapwire]
