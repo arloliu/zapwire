@@ -64,7 +64,7 @@ func NewWriter(t zapwire.Transport, opts ...Option) (*zapwire.Writer, error) {
 		opt(&o)
 	}
 
-	return buildWriter(t, o)
+	return buildWriter(t, o, NewEncoderWithCodec(o.resolveCodec()))
 }
 
 // NewCore builds a zapcore.Core (JSON-encoding into the fluent writer) plus the underlying
@@ -82,7 +82,7 @@ func NewCore(
 	}
 	o.resolveCodec().ApplyTo(&encCfg)
 
-	w, err := buildWriter(t, o)
+	w, err := buildWriter(t, o, NewEncoderWithCodec(o.resolveCodec()))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -90,10 +90,10 @@ func NewCore(
 	return zapwire.NewCore(zapcore.NewJSONEncoder(encCfg), w, level), w, nil
 }
 
-func buildWriter(t zapwire.Transport, o options) (*zapwire.Writer, error) {
+func buildWriter(t zapwire.Transport, o options, enc zapwire.Encoder) (*zapwire.Writer, error) {
 	if o.tag == "" {
 		o.tag = defaultTag
 	}
 
-	return zapwire.New(t, NewEncoderWithCodec(o.resolveCodec()), NewFramer(o.tag), o.wireOpts...)
+	return zapwire.New(t, enc, NewFramer(o.tag), o.wireOpts...)
 }
