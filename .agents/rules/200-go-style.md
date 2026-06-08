@@ -8,3 +8,5 @@
 - File layout: package → imports → consts → vars → types → constructors → exported funcs →
   unexported funcs → exported methods → unexported methods.
 - Functions ≤ 100 lines (prefer < 50), complexity ≤ 22. Short, consistent receivers.
+- Doc-comment line width: see the canonical convention in `400-docs.md`
+  (80 soft, 120 hard). It governs comments, not code lines — don't reflow code.
