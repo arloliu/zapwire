@@ -33,10 +33,27 @@ func init() {
 	msgp.RegisterExtension(extensionType, func() msgp.Extension { return new(EventTime) })
 }
 
+// ExtensionType reports the Forward EventTime msgpack extension type.
+// Implements msgp.Extension.
+//
+// Returns:
+//   - int8: the registered extension type id for EventTime
 func (t *EventTime) ExtensionType() int8 { return extensionType }
-func (t *EventTime) Len() int            { return length }
 
-// MarshalBinaryTo writes 4 bytes of seconds + 4 bytes of nanoseconds (big-endian, UTC).
+// Len reports the EventTime payload length in bytes. Implements msgp.Extension.
+//
+// Returns:
+//   - int: the fixed payload size (8 bytes)
+func (t *EventTime) Len() int { return length }
+
+// MarshalBinaryTo writes 4 bytes of seconds + 4 bytes of nanoseconds
+// (big-endian, UTC). Implements msgp.Extension.
+//
+// Parameters:
+//   - b: destination slice of exactly Len() (8) bytes
+//
+// Returns:
+//   - error: always nil; the fixed-width packing cannot fail
 func (t *EventTime) MarshalBinaryTo(b []byte) error {
 	utc := time.Time(*t).UTC()
 	sec := uint32(utc.Unix()) //nolint:gosec // Forward EventTime is 32-bit seconds (Y2106)
@@ -48,6 +65,13 @@ func (t *EventTime) MarshalBinaryTo(b []byte) error {
 }
 
 // UnmarshalBinary decodes the 8-byte EventTime payload (used by tests).
+// Implements msgp.Extension.
+//
+// Parameters:
+//   - b: an 8-byte EventTime payload
+//
+// Returns:
+//   - error: non-nil if b is not exactly 8 bytes
 func (t *EventTime) UnmarshalBinary(b []byte) error {
 	if len(b) != length {
 		return fmt.Errorf("fluent: invalid EventTime length: %d", len(b))

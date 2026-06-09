@@ -58,9 +58,20 @@ type scratch struct {
 
 var _ io.Writer = (*Writer)(nil)
 
-// New creates a Writer. It attempts an immediate connection so logs flow at once when the
-// endpoint is already up; otherwise it starts disconnected and reconnects in the
-// background. An error is returned only for nil transport/encoder/framer.
+// New creates a Writer. It attempts an immediate connection so logs flow at
+// once when the endpoint is already up; otherwise it starts disconnected and
+// reconnects in the background.
+//
+// Parameters:
+//   - t: transport to dial (e.g. UDS or TCP); must be non-nil
+//   - enc: per-entry encoder; must be non-nil
+//   - framer: wire framer applied to each encoded payload; must be non-nil
+//   - opts: functional options (e.g. WithAsyncMode, WithWriteTimeout)
+//
+// Returns:
+//   - *Writer: a ready-to-use writer; the caller owns it and must Close it
+//   - error: ErrNoTransport, ErrNoEncoder, or ErrNoFramer when the matching
+//     argument is nil
 func New(t Transport, enc Encoder, framer Framer, opts ...Option) (*Writer, error) {
 	switch {
 	case t == nil:
@@ -113,8 +124,17 @@ func New(t Transport, enc Encoder, framer Framer, opts ...Option) (*Writer, erro
 	return w, nil
 }
 
-// Write encodes p, frames it, and ships it. Dropped logs return (len(p), nil); only encode
-// failures return a non-nil error (to satisfy zap's multi-writer contract).
+// Write encodes p, frames it, and ships it to the processor. It satisfies
+// io.Writer. A dropped log (no live connection, or a full async buffer) is
+// counted rather than surfaced here, to honor zap's multi-writer contract.
+//
+// Parameters:
+//   - p: one already-formatted log entry
+//
+// Returns:
+//   - int: len(p) — the entry is reported written even when it is dropped
+//   - error: non-nil only on an encode failure (sync mode also reports a
+//     framing error); a drop is counted in DroppedLogs, not returned
 func (w *Writer) Write(p []byte) (int, error) {
 	if w.closed.Load() {
 		return len(p), nil
@@ -147,8 +167,11 @@ func (w *Writer) writeSync(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// Close stops the background goroutines, flushes any async buffer, and closes the
-// connection. It is safe to call multiple times.
+// Close stops the background goroutines, flushes any buffered async entries,
+// and closes the connection. It is safe to call more than once.
+//
+// Returns:
+//   - error: the connection's close error, or nil (including on a repeat call)
 func (w *Writer) Close() error {
 	if !w.closed.CompareAndSwap(false, true) {
 		return nil
@@ -176,12 +199,22 @@ func (w *Writer) Close() error {
 }
 
 // IsConnected reports whether a live connection is currently held.
+//
+// Returns:
+//   - bool: true if a connection is held and the Writer is not closed
 func (w *Writer) IsConnected() bool { return w.hasConn() && !w.closed.Load() }
 
-// DroppedLogs returns the count of logs dropped due to connection/buffer pressure.
+// DroppedLogs returns the count of logs dropped due to connection/buffer
+// pressure.
+//
+// Returns:
+//   - uint64: the cumulative number of dropped logs
 func (w *Writer) DroppedLogs() uint64 { return w.droppedLogs.Load() }
 
 // ReconnectCount returns the number of successful background (re)connections.
+//
+// Returns:
+//   - uint64: the cumulative count of successful (re)connections
 func (w *Writer) ReconnectCount() uint64 { return w.reconnectCount.Load() }
 
 // writeFrame performs the bounded write; n is the number of logs the frame carries (for
@@ -375,7 +408,12 @@ func (w *Writer) enqueue(payload []byte) {
 	w.droppedLogs.Add(1)
 }
 
-// Sync flushes the async buffer. It is a no-op in sync mode. Honors zap's flush contract.
+// Sync flushes the buffered async entries and waits for that flush to finish.
+// It is a no-op in sync mode or after Close, and satisfies zapcore.WriteSyncer.
+//
+// Returns:
+//   - error: always nil; delivery failures surface via WithErrorHandler and
+//     are counted in DroppedLogs, not returned here
 func (w *Writer) Sync() error {
 	if w.cfg.mode != ModeAsync || w.closed.Load() {
 		return nil

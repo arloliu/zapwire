@@ -25,11 +25,23 @@ type netTransport struct {
 }
 
 // UDS returns a Transport that connects to a Unix domain socket at path.
+//
+// Parameters:
+//   - path: filesystem path of the Unix domain socket to dial
+//
+// Returns:
+//   - Transport: a transport that dials path on each (re)connect
 func UDS(path string) Transport {
 	return &netTransport{network: "unix", address: path, timeout: defaultDialTimeout}
 }
 
 // TCP returns a Transport that connects to a TCP host:port address.
+//
+// Parameters:
+//   - addr: TCP address to dial, in host:port form
+//
+// Returns:
+//   - Transport: a transport that dials addr on each (re)connect
 func TCP(addr string) Transport {
 	return &netTransport{network: "tcp", address: addr, timeout: defaultDialTimeout}
 }

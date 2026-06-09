@@ -5,32 +5,81 @@ exported API.
 
 ## Godoc
 
-- Every exported symbol has a doc comment.
-- Start the comment with the symbol name and a one-line summary, then add
-  prose detail as needed: `// Writer ships logs to a processor ...`.
-- Default to idiomatic Go prose paragraphs (this is what the codebase uses).
-  Separate paragraphs with a blank `//` line. Match detail to complexity:
-  simple symbols get one line; complex APIs explain constraints, error
-  conditions, ownership, and edge cases.
+- Every exported symbol has a doc comment that starts with the symbol name.
+- **Exported functions and methods use the structured template below**
+  (`Parameters:` / `Returns:` / `Example:` as applicable). Making the contract
+  explicit is the house style for this repo — it reads more clearly than a
+  prose paragraph for anything with parameters or a non-obvious return.
+- Exported types, vars, consts, and trivial getters may use plain prose: a
+  symbol-name-first one-liner plus optional detail paragraphs separated by a
+  blank `//` line.
 - Cite the design doc by section when behavior is specified there, e.g.
-  `(design §3.8)` — matches existing comments in `fluent/`.
-- Prefer runnable `ExampleXxx` tests over prose code blocks for examples that
-  should render on pkg.go.dev.
+  `(design §3.8)`.
+- Prefer runnable `ExampleXxx` tests for examples that should render on
+  pkg.go.dev; the inline `Example:` block is for a short usage sketch.
+- All comment lines follow the line-width convention below.
 
-Idiomatic prose (the default, mirrors `writer.go` / `fluent/native.go`):
+### Godoc template (exported functions / methods)
+
+```go
+// FunctionName one-line summary.
+//
+// Detailed description: behavior, ownership, concurrency, edge cases
+// (optional but recommended for non-trivial APIs).
+//
+// Parameters:
+//   - param1: description and constraints
+//   - param2: expected values
+//
+// Returns:
+//   - *Result: what it represents
+//   - error: conditions that cause a non-nil error
+//
+// Example:
+//
+//	w, err := FunctionName(args)
+//	if err != nil { ... }
+func FunctionName(param1 T1, param2 T2) (*Result, error) { }
+```
+
+Omit sections when they add nothing:
+
+- No parameters → omit `Parameters:`.
+- No (or only a trivial) return → omit `Returns:`.
+- Trivial getter / one-line behavior → a single prose line is enough; do not
+  pad it with empty sections.
+
+### Examples by type
+
+Constructor:
 
 ```go
 // New creates a Writer. It attempts an immediate connection so logs flow at
 // once when the endpoint is already up; otherwise it starts disconnected and
-// reconnects in the background. An error is returned only for nil
-// transport/encoder/framer.
+// reconnects in the background.
+//
+// Parameters:
+//   - t: transport to dial (UDS or TCP); must be non-nil
+//   - enc: per-entry encoder; must be non-nil
+//   - framer: wire framer; must be non-nil
+//   - opts: functional options (e.g. WithAsync, WithWriteTimeout)
+//
+// Returns:
+//   - *Writer: ready-to-use writer; the caller owns it and must Close it
+//   - error: ErrNoTransport / ErrNoEncoder / ErrNoFramer on a nil input
 func New(t Transport, enc Encoder, framer Framer, opts ...Option) (*Writer, error)
 ```
 
-A structured `Parameters:/Returns:` block is allowed ONLY when it genuinely
-clarifies a complex exported API and prose would be harder to follow. Do not
-convert existing prose comments to this shape, and do not use it for simple
-constructors or getters.
+Method with error:
+
+```go
+// Close stops the background goroutines, flushes any buffered async entries,
+// and closes the connection. It is safe to call more than once.
+//
+// Returns:
+//   - error: the connection's close error, or nil
+func (w *Writer) Close() error
+```
 
 ## Line width (canonical — referenced by other rules)
 
