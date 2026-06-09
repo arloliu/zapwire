@@ -133,25 +133,30 @@ func (e *msgpackEncoder) EncodeEntry(ent zapcore.Entry, fields []zapcore.Field) 
 	final.sealDownTo(1) // close any remaining open top-level namespaces into the root
 
 	// Phase 3: assemble [time, record] into a pooled zap buffer (freed by ioCore after Write).
+	// The header is written straight into buf — a 2-element array, the EventTime extension, and
+	// the record map header — so there is no pooled header buffer and the EventTime is not boxed
+	// into an interface (design §3.4; byte-identity is pinned by the golden tests).
 	buf := bufferPool.Get()
-	hdr := getBytes()
-	hdr = msgp.AppendArrayHeader(hdr, 2)
+
+	buf.AppendByte(0x92)                // fixarray, 2 elements: [time, record]
+	buf.AppendByte(0xd7)                // msgpack fixext8: an 8-byte extension payload
+	buf.AppendByte(byte(extensionType)) // EventTime extension type
+
+	var ts [length]byte
 	et := EventTime(ent.Time)
-	var err error
-	if hdr, err = msgp.AppendExtension(hdr, &et); err != nil {
-		putBytes(hdr)
+	if err := et.MarshalBinaryTo(ts[:]); err != nil {
 		buf.Free()
 		putEncoder(env)
 		putEncoder(final)
 
 		return nil, fmt.Errorf("fluent: marshal event time: %w", err) // fatal (design §3.9)
 	}
-	hdr = appendMapHeader(hdr, env.stack[0].count+final.stack[0].count)
-	_, _ = buf.Write(hdr)
+	buf.AppendBytes(ts[:])
+
+	appendMapHeaderTo(buf, env.stack[0].count+final.stack[0].count) // record map header
 	_, _ = buf.Write(env.stack[0].buf)
 	_, _ = buf.Write(final.stack[0].buf)
 
-	putBytes(hdr)
 	putEncoder(env)
 	putEncoder(final)
 
@@ -368,3 +373,25 @@ func appendMapHeader(b []byte, count int) []byte { return msgp.AppendMapHeader(b
 
 //nolint:gosec // see appendMapHeader
 func appendArrayHeader(b []byte, count int) []byte { return msgp.AppendArrayHeader(b, uint32(count)) }
+
+// appendMapHeaderTo writes a msgpack map header for count entries straight into buf, mirroring
+// msgp.AppendMapHeader's fixmap/map16/map32 selection so the wire bytes are identical. Writing
+// into buf (rather than a temporary slice) keeps the EncodeEntry header off the heap.
+//
+//nolint:gosec // count is a bounded, non-negative per-entry element count; see appendMapHeader
+func appendMapHeaderTo(buf *buffer.Buffer, count int) {
+	switch c := uint32(count); {
+	case c < 16:
+		buf.AppendByte(0x80 | byte(c)) // fixmap
+	case c <= 0xffff:
+		buf.AppendByte(0xde) // map16
+		buf.AppendByte(byte(c >> 8))
+		buf.AppendByte(byte(c))
+	default:
+		buf.AppendByte(0xdf) // map32
+		buf.AppendByte(byte(c >> 24))
+		buf.AppendByte(byte(c >> 16))
+		buf.AppendByte(byte(c >> 8))
+		buf.AppendByte(byte(c))
+	}
+}
