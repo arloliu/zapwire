@@ -9,9 +9,24 @@ type Framer struct {
 }
 
 // NewFramer returns a PackedForward Framer that stamps every frame with tag.
+//
+// Parameters:
+//   - tag: Fluent Forward tag written into every frame
+//
+// Returns:
+//   - Framer: a PackedForward framer for the given tag
 func NewFramer(tag string) Framer { return Framer{tag: tag} }
 
-// Frame appends the PackedForward message for payloads to dst.
+// Frame appends the PackedForward message for payloads to dst:
+// [tag, <entries bin>, {"size": N}]. It implements zapwire.Framer.
+//
+// Parameters:
+//   - dst: buffer to append to; may be nil or a pooled slice to reuse
+//   - payloads: the per-entry [time, record] payloads to pack into one frame
+//
+// Returns:
+//   - []byte: dst extended with the PackedForward frame
+//   - error: always nil today (kept for the zapwire.Framer contract)
 func (f Framer) Frame(dst []byte, payloads [][]byte) ([]byte, error) {
 	total := 0
 	for _, p := range payloads {

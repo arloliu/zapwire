@@ -63,40 +63,98 @@ func defaultConfig() config {
 type Option func(*config)
 
 // WithSyncMode selects synchronous, write-per-log delivery (the default).
+//
+// Returns:
+//   - Option: sets the delivery mode to ModeSync
 func WithSyncMode() Option { return func(c *config) { c.mode = ModeSync } }
 
 // WithAsyncMode selects buffered, batched background delivery.
+//
+// Returns:
+//   - Option: sets the delivery mode to ModeAsync
 func WithAsyncMode() Option { return func(c *config) { c.mode = ModeAsync } }
 
-// WithWriteTimeout bounds each socket write. A non-positive value is replaced by the default.
+// WithWriteTimeout bounds each socket write.
+//
+// Parameters:
+//   - d: per-write deadline; a non-positive value is replaced by the default
+//
+// Returns:
+//   - Option: sets the bounded write timeout
 func WithWriteTimeout(d time.Duration) Option { return func(c *config) { c.writeTimeout = d } }
 
-// WithBufferSize sets the async queue capacity (number of buffered logs). A non-positive value
-// is replaced by the default.
+// WithBufferSize sets the async queue capacity (number of buffered logs).
+//
+// Parameters:
+//   - n: queue capacity in logs; a non-positive value is replaced by the
+//     default
+//
+// Returns:
+//   - Option: sets the async buffer size
 func WithBufferSize(n int) Option { return func(c *config) { c.bufferSize = n } }
 
-// WithBatchSize caps how many logs a single async flush frames together. A non-positive value
-// is replaced by the default.
+// WithBatchSize caps how many logs a single async flush frames together.
+//
+// Parameters:
+//   - n: max logs per flushed frame; a non-positive value is replaced by the
+//     default
+//
+// Returns:
+//   - Option: sets the async batch size
 func WithBatchSize(n int) Option { return func(c *config) { c.batchSize = n } }
 
-// WithFlushInterval sets the async max time a log waits before being flushed. A non-positive
-// value is replaced by the default.
+// WithFlushInterval sets the async max time a log waits before being flushed.
+//
+// Parameters:
+//   - d: max time a log waits before a flush; a non-positive value is replaced
+//     by the default
+//
+// Returns:
+//   - Option: sets the async flush interval
 func WithFlushInterval(d time.Duration) Option { return func(c *config) { c.flushInterval = d } }
 
 // WithDropPolicy selects the full-buffer drop behavior (async).
+//
+// Parameters:
+//   - p: which log to discard when the buffer is full (DropNewest or
+//     DropOldest)
+//
+// Returns:
+//   - Option: sets the async drop policy
 func WithDropPolicy(p DropPolicy) Option { return func(c *config) { c.dropPolicy = p } }
 
-// WithMaxRetries bounds reconnect attempts per burst. A non-positive value is replaced by the
-// default.
+// WithMaxRetries bounds reconnect attempts per burst.
+//
+// Parameters:
+//   - n: max reconnect attempts per burst; a non-positive value is replaced by
+//     the default
+//
+// Returns:
+//   - Option: sets the reconnect-attempt ceiling
 func WithMaxRetries(n int) Option { return func(c *config) { c.maxRetries = n } }
 
-// WithReconnect sets the initial and max reconnect backoff intervals. A non-positive value for
-// either is replaced by its default.
+// WithReconnect sets the initial and max reconnect backoff intervals.
+//
+// Parameters:
+//   - initial: first backoff interval; a non-positive value is replaced by the
+//     default
+//   - maxInterval: backoff ceiling; a non-positive value is replaced by the
+//     default
+//
+// Returns:
+//   - Option: sets the reconnect backoff bounds
 func WithReconnect(initial, maxInterval time.Duration) Option {
 	return func(c *config) { c.reconnectInterval = initial; c.maxReconnect = maxInterval }
 }
 
-// WithErrorHandler installs a callback for transport/encode errors. Defaults to stderr.
+// WithErrorHandler installs a callback for transport/encode errors. Defaults to
+// stderr.
+//
+// Parameters:
+//   - fn: callback invoked with each transport/encode error
+//
+// Returns:
+//   - Option: installs the error callback
 func WithErrorHandler(fn func(error)) Option { return func(c *config) { c.onError = fn } }
 
 // normalizeConfig replaces any non-positive tunable with its default. Public options accept

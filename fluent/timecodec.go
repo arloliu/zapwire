@@ -21,9 +21,12 @@ type TimeCodec struct {
 	Decode func(value any) (time.Time, bool)
 }
 
-// ApplyTo wires this codec's encode end onto a zapcore.EncoderConfig (TimeKey + EncodeTime).
-// Callers building their own zapcore.Core (instead of using NewCore) should call this so the
-// encode side matches Decode.
+// ApplyTo wires this codec's encode end onto a zapcore.EncoderConfig (TimeKey +
+// EncodeTime). Callers building their own zapcore.Core (instead of using
+// NewCore) should call this so the encode side matches Decode.
+//
+// Parameters:
+//   - cfg: the encoder config to mutate; its TimeKey and EncodeTime are set
 func (c TimeCodec) ApplyTo(cfg *zapcore.EncoderConfig) {
 	cfg.TimeKey = c.Key
 	cfg.EncodeTime = c.ZapEncoder
@@ -37,10 +40,17 @@ func (c TimeCodec) valid() bool { return c.Key != "" && c.ZapEncoder != nil && c
 // decoded correctly instead of to ~1970.
 func defaultTimeCodec() TimeCodec { return AutoEpochCodec("ts") }
 
-// AutoEpochCodec decodes a numeric epoch timestamp, auto-detecting its unit (s/ms/µs/ns) by
-// magnitude — robust for log timestamps (always ~now, ~3 orders of magnitude apart per
-// unit). Its encode end is EpochNanosTimeEncoder, so NewCore round-trips exactly while the
-// decoder tolerates other units on the bring-your-own-core path. This is the default codec.
+// AutoEpochCodec decodes a numeric epoch timestamp, auto-detecting its unit
+// (s/ms/µs/ns) by magnitude — robust for log timestamps (always ~now, ~3
+// orders of magnitude apart per unit). Its encode end is EpochNanosTimeEncoder,
+// so NewCore round-trips exactly while the decoder tolerates other units on the
+// bring-your-own-core path. This is the default codec.
+//
+// Parameters:
+//   - key: the JSON field the timestamp is written to and read from
+//
+// Returns:
+//   - TimeCodec: the auto-detecting epoch codec at key
 func AutoEpochCodec(key string) TimeCodec {
 	return TimeCodec{
 		Key:        key,
@@ -81,9 +91,16 @@ func epochToTime(v float64) time.Time {
 	}
 }
 
-// EpochNanosCodec encodes/decodes integer epoch nanoseconds (zapcore.EpochNanosTimeEncoder).
-// Note: JSON numbers decode to float64, so nanosecond magnitudes lose ~tens of ns of
-// precision. Use RFC3339NanoCodec when exact nanoseconds matter.
+// EpochNanosCodec encodes/decodes integer epoch nanoseconds
+// (zapcore.EpochNanosTimeEncoder). Note: JSON numbers decode to float64, so
+// nanosecond magnitudes lose ~tens of ns of precision. Use RFC3339NanoCodec
+// when exact nanoseconds matter.
+//
+// Parameters:
+//   - key: the JSON field the timestamp is written to and read from
+//
+// Returns:
+//   - TimeCodec: an integer epoch-nanoseconds codec at key
 func EpochNanosCodec(key string) TimeCodec {
 	return TimeCodec{
 		Key:        key,
@@ -98,7 +115,14 @@ func EpochNanosCodec(key string) TimeCodec {
 	}
 }
 
-// EpochMillisCodec encodes/decodes integer epoch milliseconds (zapcore.EpochMillisTimeEncoder).
+// EpochMillisCodec encodes/decodes integer epoch milliseconds
+// (zapcore.EpochMillisTimeEncoder).
+//
+// Parameters:
+//   - key: the JSON field the timestamp is written to and read from
+//
+// Returns:
+//   - TimeCodec: an integer epoch-milliseconds codec at key
 func EpochMillisCodec(key string) TimeCodec {
 	return TimeCodec{
 		Key:        key,
@@ -113,8 +137,15 @@ func EpochMillisCodec(key string) TimeCodec {
 	}
 }
 
-// EpochSecondsCodec encodes/decodes floating-point epoch seconds — zap's default
-// EpochTimeEncoder. Lets zap's out-of-the-box config work without misreading the time.
+// EpochSecondsCodec encodes/decodes floating-point epoch seconds — zap's
+// default EpochTimeEncoder. Lets zap's out-of-the-box config work without
+// misreading the time.
+//
+// Parameters:
+//   - key: the JSON field the timestamp is written to and read from
+//
+// Returns:
+//   - TimeCodec: a float epoch-seconds codec at key
 func EpochSecondsCodec(key string) TimeCodec {
 	return TimeCodec{
 		Key:        key,
@@ -134,18 +165,36 @@ func EpochSecondsCodec(key string) TimeCodec {
 
 // RFC3339NanoCodec encodes/decodes RFC3339 timestamps with nanoseconds
 // (zapcore.RFC3339NanoTimeEncoder). Exact to the nanosecond.
+//
+// Parameters:
+//   - key: the JSON field the timestamp is written to and read from
+//
+// Returns:
+//   - TimeCodec: an RFC3339-with-nanoseconds string codec at key
 func RFC3339NanoCodec(key string) TimeCodec {
 	return stringCodec(key, zapcore.RFC3339NanoTimeEncoder, time.RFC3339Nano)
 }
 
 // RFC3339Codec encodes/decodes RFC3339 timestamps at second precision
 // (zapcore.RFC3339TimeEncoder).
+//
+// Parameters:
+//   - key: the JSON field the timestamp is written to and read from
+//
+// Returns:
+//   - TimeCodec: an RFC3339 (second-precision) string codec at key
 func RFC3339Codec(key string) TimeCodec {
 	return stringCodec(key, zapcore.RFC3339TimeEncoder, time.RFC3339)
 }
 
 // ISO8601Codec encodes/decodes ISO8601 millisecond-precision strings
 // (zapcore.ISO8601TimeEncoder), e.g. "2006-01-02T15:04:05.000Z0700".
+//
+// Parameters:
+//   - key: the JSON field the timestamp is written to and read from
+//
+// Returns:
+//   - TimeCodec: an ISO8601 (millisecond) string codec at key
 func ISO8601Codec(key string) TimeCodec {
 	return stringCodec(key, zapcore.ISO8601TimeEncoder, "2006-01-02T15:04:05.000Z0700")
 }

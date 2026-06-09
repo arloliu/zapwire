@@ -50,14 +50,26 @@ func WithZapwireOptions(opts ...zapwire.Option) Option {
 	return func(o *options) { o.wireOpts = append(o.wireOpts, opts...) }
 }
 
-// NewWriter builds a zapwire.Writer that ships Fluent Forward PackedForward frames over t.
+// NewWriter builds a zapwire.Writer that ships Fluent Forward PackedForward
+// frames over t.
 //
-// Timestamp contract: the transcode Encoder reads the time field per the configured
-// TimeCodec (default AutoEpochCodec("ts")). The magnitude-tolerant default decodes common
-// epoch units (s/ms/µs/ns) correctly, so a bring-your-own-core caller on zap's default
-// float-seconds encoder still decodes to ~now. Callers wiring their own zapcore.Core (rather
-// than using NewCore) with an explicit non-Auto codec MUST align the encode end with the same
-// codec — call codec.ApplyTo(&encoderConfig) — or the timestamp will be misread.
+// Timestamp contract: the transcode Encoder reads the time field per the
+// configured TimeCodec (default AutoEpochCodec("ts")). The magnitude-tolerant
+// default decodes common epoch units (s/ms/µs/ns) correctly, so a
+// bring-your-own-core caller on zap's default float-seconds encoder still
+// decodes to ~now. Callers wiring their own zapcore.Core (rather than using
+// NewCore) with an explicit non-Auto codec MUST align the encode end with the
+// same codec — call codec.ApplyTo(&encoderConfig) — or the timestamp is
+// misread.
+//
+// Parameters:
+//   - t: transport to ship frames over; must be non-nil
+//   - opts: fluent options (WithTag, WithTimeCodec, WithTimeKey,
+//     WithZapwireOptions)
+//
+// Returns:
+//   - *zapwire.Writer: the writer; the caller owns it and must Close it
+//   - error: a non-nil error from the underlying zapwire.New
 func NewWriter(t zapwire.Transport, opts ...Option) (*zapwire.Writer, error) {
 	o := options{tag: defaultTag}
 	for _, opt := range opts {
@@ -67,9 +79,23 @@ func NewWriter(t zapwire.Transport, opts ...Option) (*zapwire.Writer, error) {
 	return buildWriter(t, o, NewEncoderWithCodec(o.resolveCodec()))
 }
 
-// NewCore builds a zapcore.Core (JSON-encoding into the fluent writer) plus the underlying
-// writer, which the caller must Close. It wires BOTH ends of the time contract from the
-// configured TimeCodec, so the JSON encoder and the transcode decoder always agree.
+// NewCore builds a zapcore.Core (JSON-encoding into the fluent writer) plus the
+// underlying writer, which the caller must Close. It wires BOTH ends of the
+// time contract from the configured TimeCodec, so the JSON encoder and the
+// transcode decoder always agree.
+//
+// Parameters:
+//   - t: transport to ship frames over; must be non-nil
+//   - level: minimum level an entry must meet to be encoded
+//   - encCfg: base zap encoder config; the codec's TimeKey/EncodeTime are
+//     applied onto it
+//   - opts: fluent options (WithTag, WithTimeCodec, WithTimeKey,
+//     WithZapwireOptions)
+//
+// Returns:
+//   - zapcore.Core: a JSON-encoding core whose time end matches the decoder
+//   - *zapwire.Writer: the underlying writer; the caller must Close it
+//   - error: a non-nil error if the writer cannot be built
 func NewCore(
 	t zapwire.Transport,
 	level zapcore.LevelEnabler,

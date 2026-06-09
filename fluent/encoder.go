@@ -15,11 +15,21 @@ type Encoder struct {
 	codec TimeCodec
 }
 
-// NewEncoder returns a transcode Encoder with the default codec (AutoEpochCodec at "ts").
+// NewEncoder returns a transcode Encoder with the default codec
+// (AutoEpochCodec at "ts").
+//
+// Returns:
+//   - Encoder: a transcode encoder ready to pass to a fluent writer
 func NewEncoder() Encoder { return Encoder{codec: defaultTimeCodec()} }
 
-// NewEncoderWithCodec returns a transcode Encoder using codec. An invalid (zero) codec
-// falls back to the default.
+// NewEncoderWithCodec returns a transcode Encoder using codec.
+//
+// Parameters:
+//   - codec: time codec for reading the timestamp; an invalid (zero) codec
+//     falls back to the default (AutoEpochCodec at "ts")
+//
+// Returns:
+//   - Encoder: a transcode encoder using the resolved codec
 func NewEncoderWithCodec(codec TimeCodec) Encoder {
 	if !codec.valid() {
 		codec = defaultTimeCodec()
@@ -28,13 +38,23 @@ func NewEncoderWithCodec(codec TimeCodec) Encoder {
 	return Encoder{codec: codec}
 }
 
-// Encode parses record (a JSON object) and appends its msgpack Entry payload to dst.
+// Encode parses record (a JSON object) and appends its msgpack Entry payload to
+// dst. It implements zapwire.Encoder.
 //
-// JSON is decoded with UseNumber so numeric record fields keep their integer type and full
-// precision on the msgpack wire: a plain json.Unmarshal decodes every JSON number to float64,
-// which silently truncates int64/uint64 values above 2^53. The time field is extracted (and
-// converted to float64 for the codec) before the remaining fields are normalized, so the
-// codecs' float64 Decode contract is unaffected.
+// JSON is decoded with UseNumber so numeric record fields keep their integer
+// type and full precision on the msgpack wire: a plain json.Unmarshal decodes
+// every JSON number to float64, which silently truncates int64/uint64 values
+// above 2^53. The time field is extracted (and converted to float64 for the
+// codec) before the remaining fields are normalized, so the codecs' float64
+// Decode contract is unaffected.
+//
+// Parameters:
+//   - dst: buffer to append to; may be nil or a pooled slice to reuse
+//   - record: one log entry as a JSON object
+//
+// Returns:
+//   - []byte: dst extended with the msgpack [time, record] Entry payload
+//   - error: non-nil if record is invalid JSON or marshaling the Entry fails
 func (e Encoder) Encode(dst, record []byte) ([]byte, error) {
 	dec := json.NewDecoder(bytes.NewReader(record))
 	dec.UseNumber()
