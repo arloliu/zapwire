@@ -74,46 +74,51 @@ func WithSyncMode() Option { return func(c *config) { c.mode = ModeSync } }
 //   - Option: sets the delivery mode to ModeAsync
 func WithAsyncMode() Option { return func(c *config) { c.mode = ModeAsync } }
 
-// WithWriteTimeout bounds each socket write.
+// WithWriteTimeout bounds each socket write. The default is 100ms.
 //
 // Parameters:
 //   - d: per-write deadline; a non-positive value is replaced by the default
+//     (100ms)
 //
 // Returns:
 //   - Option: sets the bounded write timeout
 func WithWriteTimeout(d time.Duration) Option { return func(c *config) { c.writeTimeout = d } }
 
-// WithBufferSize sets the async queue capacity (number of buffered logs).
+// WithBufferSize sets the async queue capacity (number of buffered logs). The
+// default is 4096. Applies in async mode only.
 //
 // Parameters:
 //   - n: queue capacity in logs; a non-positive value is replaced by the
-//     default
+//     default (4096)
 //
 // Returns:
 //   - Option: sets the async buffer size
 func WithBufferSize(n int) Option { return func(c *config) { c.bufferSize = n } }
 
-// WithBatchSize caps how many logs a single async flush frames together.
+// WithBatchSize caps how many logs a single async flush frames together. The
+// default is 128. Applies in async mode only.
 //
 // Parameters:
 //   - n: max logs per flushed frame; a non-positive value is replaced by the
-//     default
+//     default (128)
 //
 // Returns:
 //   - Option: sets the async batch size
 func WithBatchSize(n int) Option { return func(c *config) { c.batchSize = n } }
 
 // WithFlushInterval sets the async max time a log waits before being flushed.
+// The default is 200ms. Applies in async mode only.
 //
 // Parameters:
 //   - d: max time a log waits before a flush; a non-positive value is replaced
-//     by the default
+//     by the default (200ms)
 //
 // Returns:
 //   - Option: sets the async flush interval
 func WithFlushInterval(d time.Duration) Option { return func(c *config) { c.flushInterval = d } }
 
-// WithDropPolicy selects the full-buffer drop behavior (async).
+// WithDropPolicy selects the full-buffer drop behavior (async). The default is
+// DropNewest.
 //
 // Parameters:
 //   - p: which log to discard when the buffer is full (DropNewest or
@@ -123,23 +128,25 @@ func WithFlushInterval(d time.Duration) Option { return func(c *config) { c.flus
 //   - Option: sets the async drop policy
 func WithDropPolicy(p DropPolicy) Option { return func(c *config) { c.dropPolicy = p } }
 
-// WithMaxRetries bounds reconnect attempts per burst.
+// WithMaxRetries bounds reconnect attempts per burst. The default is 30.
 //
 // Parameters:
 //   - n: max reconnect attempts per burst; a non-positive value is replaced by
-//     the default
+//     the default (30)
 //
 // Returns:
 //   - Option: sets the reconnect-attempt ceiling
 func WithMaxRetries(n int) Option { return func(c *config) { c.maxRetries = n } }
 
-// WithReconnect sets the initial and max reconnect backoff intervals.
+// WithReconnect sets the initial and max reconnect backoff intervals. The
+// backoff starts at initial and doubles up to maxInterval between attempts. The
+// defaults are 100ms initial and 3s max.
 //
 // Parameters:
 //   - initial: first backoff interval; a non-positive value is replaced by the
-//     default
+//     default (100ms)
 //   - maxInterval: backoff ceiling; a non-positive value is replaced by the
-//     default
+//     default (3s)
 //
 // Returns:
 //   - Option: sets the reconnect backoff bounds

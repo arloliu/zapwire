@@ -24,7 +24,9 @@ type netTransport struct {
 	timeout time.Duration
 }
 
-// UDS returns a Transport that connects to a Unix domain socket at path.
+// UDS returns a Transport that connects to a Unix domain socket at path. Each
+// (re)connect dial is bounded by a 3s timeout; dialing runs only on the
+// background (re)connect path, never on the log-write path.
 //
 // Parameters:
 //   - path: filesystem path of the Unix domain socket to dial
@@ -35,7 +37,9 @@ func UDS(path string) Transport {
 	return &netTransport{network: "unix", address: path, timeout: defaultDialTimeout}
 }
 
-// TCP returns a Transport that connects to a TCP host:port address.
+// TCP returns a Transport that connects to a TCP host:port address. Each
+// (re)connect dial is bounded by a 3s timeout; dialing runs only on the
+// background (re)connect path, never on the log-write path.
 //
 // Parameters:
 //   - addr: TCP address to dial, in host:port form
