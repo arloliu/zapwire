@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same ref (e.g. when a PR branch is updated).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            .golangci-lint.go.sum
+
+      # Builds and runs the pinned golangci-lint (v2.11.4) via `go tool`,
+      # exactly as the local `make lint` gate does.
+      - name: Lint
+        run: make lint
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            examples/go.sum
+
+      - name: Vet
+        run: make vet
+
+      - name: Test (race)
+        run: make test
+
+      - name: Coverage
+        run: make coverage
+
+      # The examples live in their own module (examples/go.mod); build + vet them
+      # so they are guarded against API drift, mirroring `make ci`.
+      - name: Build & vet examples
+        run: make examples
