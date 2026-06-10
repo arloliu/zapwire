@@ -3,6 +3,13 @@
 # Pinned to golangci-lint v2.11.4 (see Makefile GOLANGCI_LINT_VERSION).
 version: "2"
 
+run:
+  # Lint the opt-in integration test (fluent/fluentbit_integration_test.go) too,
+  # so it can never rot behind its build tag. The tag only affects what golangci
+  # compiles; `go test`/`go vet` still exclude it unless run with -tags fluentbit.
+  build-tags:
+    - fluentbit
+
 linters:
   enable:
     # -- Correctness --
