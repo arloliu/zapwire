@@ -8,7 +8,7 @@ LINTER_GOMOD          := -modfile=.golangci-lint.go.mod
 GOLANGCI_LINT_VERSION := 2.11.4
 
 .DEFAULT_GOAL := help
-.PHONY: help test test-race bench coverage lint linter-update linter-version clean-linter-cache fmt vet gomod-tidy generate ci
+.PHONY: help test test-race bench coverage lint linter-update linter-version clean-linter-cache fmt vet gomod-tidy generate examples ci
 
 ## help: Show this help message
 help:
@@ -43,6 +43,10 @@ fmt:
 vet:
 	@go vet ./...
 
+## examples: Build and vet the runnable examples (separate module under examples/)
+examples:
+	@cd examples && go build ./... && go vet ./...
+
 ## lint: Run linters (verifies the pinned version first)
 lint:
 	@INSTALLED=$$(go tool $(LINTER_GOMOD) golangci-lint --version 2>/dev/null | grep -oE 'version [^ ]+' | cut -d' ' -f2 || echo none); \
@@ -69,4 +73,4 @@ gomod-tidy:
 	@go mod verify
 
 ## ci: Full local gate
-ci: lint vet test coverage
+ci: lint vet test coverage examples
