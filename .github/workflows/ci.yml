@@ -63,3 +63,32 @@ jobs:
       # so they are guarded against API drift, mirroring `make ci`.
       - name: Build & vet examples
         run: make examples
+
+  integration:
+    name: Integration (Fluent Bit)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      # The official installer adds the Fluent Bit apt repo and installs the
+      # binary to /opt/fluent-bit/bin/fluent-bit. Pin the version (the script
+      # reads FLUENT_BIT_RELEASE_VERSION) so an upstream release can never change
+      # the decoded output our assertions match; bump it deliberately.
+      - name: Install Fluent Bit
+        run: curl -fsSL https://raw.githubusercontent.com/fluent/fluent-bit/master/install.sh | sh
+        env:
+          FLUENT_BIT_RELEASE_VERSION: "5.0.6"
+
+      # Runs the opt-in `fluentbit`-tagged tests against the real binary, proving
+      # zapwire's Fluent Forward frames stay interoperable end to end.
+      - name: Integration tests (real Fluent Bit)
+        run: make integration
+        env:
+          ZAPWIRE_FLUENT_BIT_BIN: /opt/fluent-bit/bin/fluent-bit

@@ -8,7 +8,7 @@ LINTER_GOMOD          := -modfile=.golangci-lint.go.mod
 GOLANGCI_LINT_VERSION := 2.11.4
 
 .DEFAULT_GOAL := help
-.PHONY: help test test-race bench coverage lint linter-update linter-version clean-linter-cache fmt vet gomod-tidy generate examples ci
+.PHONY: help test test-race integration bench coverage lint linter-update linter-version clean-linter-cache fmt vet gomod-tidy generate examples ci
 
 ## help: Show this help message
 help:
@@ -20,6 +20,13 @@ test:
 
 ## test-race: Alias for test
 test-race: test
+
+## integration: Run opt-in integration tests against a real Fluent Bit (set ZAPWIRE_FLUENT_BIT_BIN=/path/to/fluent-bit)
+integration:
+	@if [ -z "$(ZAPWIRE_FLUENT_BIT_BIN)" ]; then \
+		echo "set ZAPWIRE_FLUENT_BIT_BIN to a fluent-bit binary, e.g. ZAPWIRE_FLUENT_BIT_BIN=/opt/fluent-bit/bin/fluent-bit make integration"; \
+		exit 1; fi
+	@go test ./fluent -tags fluentbit -run Integration -race -count=1 -v -timeout=$(TEST_TIMEOUT)
 
 ## bench: Run benchmarks (no race; report allocations)
 bench:
