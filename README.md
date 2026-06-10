@@ -3,11 +3,34 @@
 High-performance [zap](https://github.com/uber-go/zap) `WriteSyncer` that ships structured
 logs to log processors over UDS or TCP, with never-block drop-on-stall semantics.
 
-## Install
-
 ```bash
 go get github.com/arloliu/zapwire
 ```
+
+> **New here?** Read the **[User Guide](docs/guide.md)** for a full walkthrough — architecture,
+> the three Fluent encoding paths, time codecs, sync vs async tuning, graceful shutdown, and
+> troubleshooting. Prefer code? The **[`examples/`](examples)** folder has runnable, self-contained
+> programs. This README is the quick reference.
+
+## How it fits together
+
+zapwire sits behind a normal `zap.Logger`. A log entry flows through five pieces:
+
+```
+zap.Logger
+  └─ zapcore.Core ── zap encoder ─▶ bytes
+       └─ zapwire.Encoder ─▶ per-entry wire payload
+            └─ zapwire.Framer ─▶ one wire frame
+                 └─ zapwire.Writer ─▶ Transport (UDS / TCP, auto-reconnecting) ─▶ processor
+```
+
+- **Transport** — `zapwire.UDS(path)` or `zapwire.TCP(addr)`. Reconnects in the background.
+- **Encoder / Framer** — per-processor wire format (msgpack vs newline-delimited). You rarely
+  touch these directly; the `fluent` and `ndjson` subpackages wire the right ones.
+- **Writer** — the connection manager. Bounded, never-blocking writes (drop-on-stall).
+- **Core** — `NewCore` glues a zap encoder + the Writer into a `zapcore.Core` ready for `zap.New`.
+
+The `NewCore` / `NewWriter` constructors in each subpackage assemble all of this for you.
 
 ## Processors & formats
 
@@ -16,9 +39,9 @@ go get github.com/arloliu/zapwire
 | Fluent Forward (msgpack) | Fluentd, Fluent-bit, Vector | `fluent` |
 | NDJSON | Vector, Logstash, OTel Collector, generic | `ndjson` |
 
-Transports: `zapwire.UDS(path)` and `zapwire.TCP(addr)`.
+## Quick start
 
-## Quick start (Fluent Forward over UDS)
+### Fluent Forward over UDS
 
 ```go
 core, writer, err := fluent.NewCore(
@@ -36,34 +59,12 @@ logger := zap.New(core)
 logger.Info("started", zap.String("version", "1.0.0"))
 ```
 
-### Timestamps
+`fluent` offers three paths: **transcode** (`NewCore`, JSON→msgpack), **native** (`NewNativeCore`,
+direct msgpack — faster, exact numeric types, recommended for new code), and **bring-your-own
+core** (`NewWriter` / `NewMsgpackEncoder` for tees and samplers). See
+[Choosing a Fluent path](docs/guide.md#fluent-three-encoding-paths).
 
-`fluent.NewCore` wires both ends of the time round-trip from a `TimeCodec`, so the JSON
-encoder and the decoder always agree. Choose a built-in or supply your own:
-
-```go
-core, w, _ := fluent.NewCore(zapwire.UDS(path), zap.InfoLevel, cfg,
-    fluent.WithTimeCodec(fluent.RFC3339NanoCodec("ts")))
-```
-
-Built-ins: `AutoEpochCodec` (default — magnitude-tolerant numeric epoch decoder),
-`EpochNanosCodec`, `EpochMillisCodec`, `EpochSecondsCodec`, `RFC3339NanoCodec`, `RFC3339Codec`,
-`ISO8601Codec`. Override just the key with `fluent.WithTimeKey("timestamp")`, or pass a custom
-`fluent.TimeCodec{Key, ZapEncoder, Decode}`.
-
-If you build your own `zapcore.Core` (via `fluent.NewWriter`) instead of `NewCore`, align the
-encode end yourself: `codec.ApplyTo(&encoderConfig)`.
-
-### Numeric fields
-
-The Fluent transcode path decodes JSON record numbers with `UseNumber` and normalizes
-integral values to msgpack `int`/`uint`, preserving `int64`/`uint64` precision above 2⁵³.
-Side effect: because zap encodes a whole-number `float64` as an integer JSON literal
-(`zap.Float64("x", 3.0)` → `3`), such a field arrives as a msgpack integer, indistinguishable
-from `zap.Int`. Values with a fractional part are unaffected. Exact preservation of zap's
-original numeric kind requires the v2 native encoder (no JSON round-trip).
-
-## NDJSON over TCP
+### NDJSON over TCP (async)
 
 ```go
 core, writer, _ := ndjson.NewCore(zapwire.TCP("collector:9000"), zap.InfoLevel,
@@ -72,22 +73,65 @@ defer writer.Close()
 logger := zap.New(core)
 ```
 
+## Examples
+
+Runnable, self-contained programs in [`examples/`](examples) — each spins up a local sink, ships
+logs to it, and prints what arrived (no external processor needed). Run with `go run ./<name>`:
+
+- [`ndjson-tcp`](examples/ndjson-tcp) — NDJSON over TCP, sync mode, end-to-end
+- [`fluent-native-uds`](examples/fluent-native-uds) — Fluent native msgpack over UDS, with frame decoding
+- [`async-observability`](examples/async-observability) — async tuning + the health counters
+- [`tee-console`](examples/tee-console) — `zapcore.NewTee` fan-out with per-core levels
+
 ## Delivery modes
 
-- **Sync (default):** each log is written inline with a bounded deadline, so a sync caller
-  waits for its own write up to `WithWriteTimeout` and concurrent sync callers serialize on the
-  single in-flight write. The wait is bounded, never unbounded.
+- **Sync (default):** each log is written inline with a bounded deadline. A sync caller waits
+  for its own write up to `WithWriteTimeout`; concurrent sync callers serialize on the single
+  in-flight write. The wait is bounded, never unbounded.
 - **Async (`zapwire.WithAsyncMode()`):** logs are buffered and flushed in batches; `Write`
-  enqueues and returns without blocking. Call `logger.Sync()` to flush.
+  enqueues and returns without blocking. Call `logger.Sync()` to force a flush.
 
-Both drop-on-stall rather than block indefinitely. Tune with `WithBufferSize`, `WithBatchSize`,
-`WithFlushInterval`, `WithDropPolicy`, `WithWriteTimeout`, `WithReconnect`, `WithMaxRetries`,
-`WithErrorHandler`. Introspect with `Writer.DroppedLogs()`, `ReconnectCount()`,
-`IsConnected()`.
+Both drop-on-stall rather than block indefinitely. See
+[Sync vs Async](docs/guide.md#sync-vs-async) for how to choose and tune.
+
+## Options & defaults
+
+All options are passed to the subpackage constructors. For `fluent`, wrap core options in
+`fluent.WithZapwireOptions(...)`; for `ndjson` and the root `zapwire.New`, pass them directly.
+
+| Option | Applies | Default | Purpose |
+|---|---|---|---|
+| `WithSyncMode()` | both | **default** | inline write-per-log |
+| `WithAsyncMode()` | both | — | buffered, batched background delivery |
+| `WithWriteTimeout(d)` | both | `100ms` | per-socket-write deadline |
+| `WithBufferSize(n)` | async | `4096` | queue capacity, in logs |
+| `WithBatchSize(n)` | async | `128` | max logs per flushed frame |
+| `WithFlushInterval(d)` | async | `200ms` | max time a log waits before a flush |
+| `WithDropPolicy(p)` | async | `DropNewest` | what to discard when the buffer is full |
+| `WithMaxRetries(n)` | both | `30` | reconnect attempts per burst |
+| `WithReconnect(initial, max)` | both | `100ms` / `3s` | reconnect backoff bounds |
+| `WithErrorHandler(fn)` | both | stderr | transport-error callback (encode errors return from `Write`) |
+
+`fluent`-only: `WithTag` (default `"app.logs"`), `WithTimeCodec` (default `AutoEpochCodec("ts")`),
+`WithTimeKey`, `WithZapwireOptions`.
+
+The dial timeout is **3s** (not configurable) and only ever applies on the background reconnect
+path — never on a log-write call.
+
+## Observability
+
+```go
+writer.DroppedLogs()    // uint64 — logs dropped due to connection/buffer pressure
+writer.ReconnectCount() // uint64 — successful background (re)connections
+writer.IsConnected()    // bool   — a connection object is held (not a TCP liveness check; see guide)
+```
 
 ## Semantics
 
 zapwire is **at-most-once**: buffered logs are lost on a hard crash, and a stalled or absent
 consumer causes counted drops rather than an unbounded block (sync mode waits only up to its
-bounded `WithWriteTimeout`; async mode never blocks on enqueue). See
-[`docs/design/2026-06-07-zapwire-design.md`](docs/design/2026-06-07-zapwire-design.md).
+bounded `WithWriteTimeout`; async mode never blocks on enqueue).
+
+See the **[User Guide](docs/guide.md)** for the full treatment, and
+[`docs/design/2026-06-07-zapwire-design.md`](docs/design/2026-06-07-zapwire-design.md) for the
+design rationale.
