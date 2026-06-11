@@ -9,11 +9,19 @@ GOLANGCI_LINT_VERSION := 2.11.4
 MODULES               := . ./otlp ./otlp/internal/conformance
 
 .DEFAULT_GOAL := help
-.PHONY: help test test-race integration integration-otel bench coverage lint linter-update linter-version clean-linter-cache fmt vet gomod-tidy generate examples ci
+.PHONY: help workspace test test-race integration integration-otel bench coverage lint linter-update linter-version clean-linter-cache fmt vet gomod-tidy generate examples ci
 
 ## help: Show this help message
 help:
 	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/^## /  /'
+
+## workspace: Create a local go.work for cross-module development (untracked; see .gitignore)
+workspace:
+	@if [ -f go.work ]; then \
+		echo "go.work already exists"; \
+	else \
+		go work init $(MODULES) && echo "created go.work ($(MODULES))"; \
+	fi
 
 ## test: Run unit tests with the race detector for all modules
 test:
