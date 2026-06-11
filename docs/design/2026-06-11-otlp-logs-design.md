@@ -664,8 +664,11 @@ own-module boundary still keeps the root graph free of *any* OTel dependency):
   indirect `go.opentelemetry.io/otel` into go.mod only).
 - **No** root-module import (§2.1), no grpc, no protobuf runtime, no OTel SDK (the logs SDK
   is still v0.x with breaking churn — explicitly avoided).
-- Root repo gains a `go.work` (root module + `otlp/` + the conformance test module) and CI
-  matrix entries (`go test ./...` per module, lint per module).
+- No committed `go.work`: per the Go team's guidance, workspace files are a local dev
+  convenience and stay untracked (gitignored). Each module builds standalone — the
+  conformance module reaches `otlp/` via a `replace` directive. Developers who want
+  cross-module editing run `go work init . ./otlp ./otlp/internal/conformance` locally.
+  CI/Makefile loop over the modules directly (`go test ./...` per module, lint per module).
 - Release tagging: `otlp/vX.Y.Z` tags per Go multi-module convention.
 
 ## 12. Codex plan-review pass-1 resolutions

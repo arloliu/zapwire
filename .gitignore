@@ -6,6 +6,11 @@
 .claude/scheduled_tasks.lock
 .claude/settings.local.json
 
+# Go workspace files are a local dev convenience (Go team guidance: do not
+# commit). Recreate with: go work init . ./otlp ./otlp/internal/conformance
+go.work
+go.work.sum
+
 .vscode/settings.json
 .vscode
 *.code-workspace
