@@ -2,6 +2,7 @@ package otlp
 
 import (
 	"compress/gzip"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -68,23 +69,27 @@ func TestExportRetriesThenSucceeds(t *testing.T) {
 	require.Zero(t, w.DroppedLogs())
 }
 
-func TestExport400NeverRetried(t *testing.T) {
-	var hits atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-		hits.Add(1)
-		rw.WriteHeader(http.StatusBadRequest)
-	}))
-	defer srv.Close()
+func TestExport4xxNeverRetried(t *testing.T) {
+	for _, status := range []int{400, 413} {
+		t.Run(fmt.Sprintf("%d", status), func(t *testing.T) {
+			var hits atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+				hits.Add(1)
+				rw.WriteHeader(status)
+			}))
+			defer srv.Close()
 
-	w, errs := newTestWriter(t, srv.URL)
-	w.export([][]byte{{0x10, 0x09}, {0x10, 0x05}}, true)
-	require.Equal(t, int32(1), hits.Load())
-	require.Equal(t, uint64(2), w.DroppedLogs()) // whole batch counted
-	require.Len(t, *errs, 1)
-	var ee *ExportError
-	require.ErrorAs(t, (*errs)[0], &ee)
-	require.Equal(t, 400, ee.StatusCode)
-	require.False(t, ee.Retryable)
+			w, errs := newTestWriter(t, srv.URL)
+			w.export([][]byte{{0x10, 0x09}, {0x10, 0x05}}, true)
+			require.Equal(t, int32(1), hits.Load())
+			require.Equal(t, uint64(2), w.DroppedLogs()) // whole batch counted
+			require.Len(t, *errs, 1)
+			var ee *ExportError
+			require.ErrorAs(t, (*errs)[0], &ee)
+			require.Equal(t, status, ee.StatusCode)
+			require.False(t, ee.Retryable)
+		})
+	}
 }
 
 func TestExportRetryBudgetExhausted(t *testing.T) {

@@ -30,6 +30,7 @@ func spanCtx(t *testing.T) (trace.SpanContext, context.Context) {
 		SpanID:     trace.SpanID{0xee, 0xe1, 0x9b, 0x7e, 0xc3, 0xc1, 0xb1, 0x74},
 		TraceFlags: trace.FlagsSampled,
 	})
+
 	return sc, trace.ContextWithSpanContext(context.Background(), sc)
 }
 
@@ -49,6 +50,7 @@ func roundTripRecord(t *testing.T, fields ...zapcore.Field) *logspb.LogRecord {
 	remarshaled, err := proto.Marshal(&rec)
 	require.NoError(t, err)
 	require.Equal(t, remarshaled, ours, "byte identity with official marshaling")
+
 	return &rec
 }
 
@@ -59,6 +61,7 @@ func (objAll) MarshalLogObject(e zapcore.ObjectEncoder) error {
 	e.AddInt64("i", -7)
 	e.OpenNamespace("deep")
 	e.AddBool("b", true)
+
 	return nil
 }
 
@@ -68,6 +71,7 @@ func (arrMixed) MarshalLogArray(e zapcore.ArrayEncoder) error {
 	e.AppendString("x")
 	e.AppendFloat64(2.5)
 	_ = e.AppendObject(objAll{})
+
 	return nil
 }
 
@@ -137,6 +141,7 @@ type failingObj struct{}
 func (failingObj) MarshalLogObject(e zapcore.ObjectEncoder) error {
 	e.AddString("partial", "bytes")
 	e.OpenNamespace("opened")
+
 	return errors.New("fail")
 }
 
@@ -146,6 +151,7 @@ type failingArr struct{}
 func (failingArr) MarshalLogArray(e zapcore.ArrayEncoder) error {
 	e.AppendString("partial")
 	_ = e.AppendObject(objAll{})
+
 	return errors.New("fail")
 }
 
