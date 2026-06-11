@@ -9,7 +9,7 @@ GOLANGCI_LINT_VERSION := 2.11.4
 MODULES               := . ./otlp ./otlp/internal/conformance
 
 .DEFAULT_GOAL := help
-.PHONY: help workspace test test-race integration integration-otel bench coverage lint linter-update linter-version clean-linter-cache fmt vet gomod-tidy generate examples ci
+.PHONY: help workspace test test-race integration integration-otel integration-vector bench coverage lint linter-update linter-version clean-linter-cache fmt vet gomod-tidy generate examples ci
 
 ## help: Show this help message
 help:
@@ -40,6 +40,10 @@ integration:
 ## integration-otel: Run the opt-in otel-collector integration test (needs OTELCOL_BIN)
 integration-otel:
 	cd otlp && go test -tags otelcollector -run TestCollectorEndToEnd -v ./...
+
+## integration-vector: Run the opt-in Vector end-to-end test (needs vector or VECTOR_BIN)
+integration-vector:
+	cd otlp && go test -tags vector -run TestVectorEndToEnd -v ./...
 
 ## bench: Run benchmarks (no race; report allocations)
 bench:
