@@ -38,6 +38,7 @@ The `NewCore` / `NewWriter` constructors in each subpackage assemble all of this
 |---|---|---|
 | Fluent Forward (msgpack) | Fluentd, Fluent-bit, Vector | `fluent` |
 | NDJSON | Vector, Logstash, OTel Collector, generic | `ndjson` |
+| Syslog (RFC5424) | rsyslog, syslog-ng, Vector, Logstash | `syslog` |
 
 ## Quick start
 
