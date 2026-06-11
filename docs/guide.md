@@ -15,6 +15,7 @@ This guide walks through every concept and every knob. For a one-page reference,
 - [Encoder config & log level](#encoder-config--log-level)
 - [Fluent: three encoding paths](#fluent-three-encoding-paths)
 - [NDJSON](#ndjson)
+- [OTLP](#otlp)
 - [Time codecs](#time-codecs)
 - [Sync vs Async](#sync-vs-async)
 - [Reconnect, drops & observability](#reconnect-drops--observability)
@@ -244,6 +245,118 @@ logger := zap.New(core)
 NDJSON has no timestamp codec to configure — the time is whatever zap's encoder writes (control it
 through the standard `EncoderConfig.TimeKey` / `EncoderConfig.EncodeTime`). `ndjson.NewWriter`
 exists too, for the bring-your-own-core pattern, and takes core zapwire options directly.
+
+---
+
+## OTLP
+
+The `otlp` subpackage lives in its own Go module — add it with
+`go get github.com/arloliu/zapwire/otlp`. This keeps OTel dependencies
+(specifically `go.opentelemetry.io/otel/trace`) out of plain zapwire users'
+dependency graphs. The package ships logs as OTLP/HTTP binary protobuf
+(ExportLogsServiceRequest, POST /v1/logs) to any OTLP receiver: the OTel
+Collector, Grafana Loki ≥ 3.0, Elastic, Datadog Agent. **Unlike the other
+subpackages it does not use zapwire.Writer** — it has its own async HTTP
+exporter, so the guide's [Sync vs Async](#sync-vs-async) and
+[Reconnect, drops & observability](#reconnect-drops--observability)
+sections do not apply to it. Delivery semantics are described
+[below](#otlp-delivery-semantics).
+
+### Quick start
+
+```go
+core, w, err := otlp.NewCore("http://collector:4318", zapcore.InfoLevel,
+    otlp.WithServiceName("checkout"))
+if err != nil {
+    log.Fatal(err)
+}
+defer w.Close()
+
+logger := zap.New(core)
+logger.Info("payment ok", otlp.SpanContext(ctx))
+```
+
+### Trace correlation
+
+The encoder promotes trace context from a `context.Context` (or from the eager
+`SpanContext` helper) into the LogRecord's `trace_id`, `span_id`, and `flags`
+proto fields — first-class correlation, not string attributes.
+
+**Compatibility matrix** (condensed from `otlp/doc.go`):
+
+| Form | `otlp.NewCore` | stock `zapcore.NewCore` |
+|---|---|---|
+| per-call `zap.Any("context", ctx)` | yes | yes |
+| per-call `otlp.SpanContext(ctx)` | yes | yes |
+| `With(otlp.SpanContext(ctx))` | yes | yes |
+| `With(zap.Any("context", ctx))` | yes | **NO** — stringified attribute |
+
+The stock-core limitation is structural: zap classifies contexts as
+`fmt.Stringer`, so `ioCore.With` erases the value before any encoder hook.
+`otlp.NewCore` pre-scans `With` fields before dispatch to avoid this.
+
+**Three correlation forms:**
+
+```go
+// Form 1: per-call eager helper — branch-free, works on any core.
+logger.Info("order placed", otlp.SpanContext(ctx))
+
+// Form 2: sticky — attach once, all subsequent calls on reqLog carry the span.
+// Works on otlp.NewCore — the custom core pre-scans With fields.
+reqLog := logger.With(zap.Any("context", ctx))
+reqLog.Info("payment authorised")
+
+// Form 3: sugared keysAndValues — InjectTraceKVs prepends the span-context
+// field; zap's sugar consumes typed Fields before pair processing.
+sugar.Infow("email queued", otlp.InjectTraceKVs(ctx, "recipient", "buyer@x")...)
+```
+
+**Application-layer wrapper boundary.** `InjectTraceFields` is the building block for
+`InfoCtx`-style helpers. zapwire deliberately leaves these wrappers to the application:
+
+```go
+func infoCtx(logger *zap.Logger, ctx context.Context, msg string, fields ...zap.Field) {
+    logger.Info(msg, otlp.InjectTraceFields(ctx, fields...)...)
+}
+```
+
+`TraceCorrelationFields` is for **non-OTLP sinks** (ndjson/fluent/syslog → Loki
+derived fields, Datadog log parsing). On the OTLP core its string attributes do
+not set the LogRecord trace fields — use `SpanContext` or the Inject helpers for OTLP correlation.
+
+### Delivery semantics {#otlp-delivery-semantics}
+
+The OTLP exporter is **async-only, at-most-once**: logs are enqueued into a
+bounded channel and a single flush goroutine drains, batches (by count, byte
+budget, and interval), and ships them. It never blocks the application goroutine.
+
+OTLP retry semantics: HTTP 429, 502, 503, 504 are retried with exponential
+backoff up to a configurable budget (`WithRetry`); 400, 413, and transport
+errors are dropped immediately. A `Retry-After` header (delta-seconds or
+HTTP-date) overrides the computed delay, capped by the remaining budget.
+
+Partial-success responses are accounted: rejected record counts are added to
+`DroppedLogs()` and reported to `WithErrorHandler` as `*ExportError{Rejected: n}`.
+
+`Sync()` is a flush barrier — it waits until every record enqueued before the
+call is either exported or dropped. `Close()` stops intake and drains with one
+attempt per batch (no retry). `DroppedLogs()` is the cumulative count of records
+not confirmed delivered (queue overflow, retry exhaustion, partial-success
+rejections, cancelled batches). `WithErrorHandler` receives terminal `*ExportError`
+values: a `Retryable` error has already exhausted its retry budget.
+
+### Receivers and endpoint resolution
+
+The package is tested end-to-end against the OTel Collector (`make integration-otel`)
+and Vector's opentelemetry source (`make integration-vector`). The endpoint URL is
+validated at construction time; `/v1/logs` is appended only when the path is empty or `"/"` (bare slash).
+
+`EndpointFromEnv()` reads `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` first, then
+`OTEL_EXPORTER_OTLP_ENDPOINT` (base URL; `/v1/logs` is appended when the path is
+empty or `"/"`). Environment handling is explicit and opt-in — zapwire never reads env
+variables behind the caller's back.
+
+> Runnable version: [`examples/otlp-trace-correlation`](../examples/otlp-trace-correlation).
 
 ---
 

@@ -1,8 +1,10 @@
 # zapwire examples
 
-Runnable, self-contained examples. Each one stands up a local sink on the
-loopback interface, ships logs to it, and prints what arrived — no external log
-processor required. For the full reference, see the [User Guide](../docs/guide.md).
+Runnable, self-contained examples. Most stand up a local sink on the loopback
+interface, ship logs to it, and print what arrived. The OTLP example instead
+ships to an OTLP endpoint and reports delivery health — it is safe to run
+without a collector (drops are expected and counted). For the full reference,
+see the [User Guide](../docs/guide.md).
 
 Run any example from this directory:
 
@@ -16,6 +18,7 @@ go run ./ndjson-tcp
 | [`fluent-native-uds`](fluent-native-uds) | Fluent Forward **native** msgpack over a Unix socket, with frame decoding on the sink |
 | [`async-observability`](async-observability) | **Async** mode + tuning, and the `DroppedLogs` / `ReconnectCount` / `IsConnected` health counters |
 | [`tee-console`](tee-console) | Fan-out with `zapcore.NewTee`: console + wire, with a different level per core |
+| [`otlp-trace-correlation`](otlp-trace-correlation) | OTLP/HTTP protobuf export with trace correlation; the three correlation forms and the `infoCtx` app-layer boundary; graceful shutdown and `DroppedLogs` |
 
 ## A note on layout
 
