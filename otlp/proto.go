@@ -30,7 +30,7 @@ func appendVarint(dst []byte, v int64) []byte {
 	return appendUvarint(dst, uint64(v)) //nolint:gosec
 }
 
-func appendTaggedUvarint(dst []byte, tag byte, v uint64) []byte {
+func appendTaggedUvarint(dst []byte, tag byte, v uint64) []byte { //nolint:unparam // tag varies in tests and future tasks
 	return appendUvarint(append(dst, tag), v)
 }
 
