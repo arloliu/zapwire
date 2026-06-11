@@ -172,10 +172,3 @@ func (e *encoder) addMeta(work *encState, ent zapcore.Entry) {
 		work.addKVRoot("code.stacktrace", work.anyString(ent.Stack))
 	}
 }
-
-// NewEncoder builds the OTLP zapcore.Encoder. Only encoder-end options take
-// effect (design §3.6: no zapcore.EncoderConfig — every slot it would
-// configure is structurally defined by the OTLP data model).
-func NewEncoder(opts ...Option) zapcore.Encoder {
-	return newEncoder(applyOptions(opts))
-}
