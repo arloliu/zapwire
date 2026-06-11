@@ -2,7 +2,10 @@ module github.com/arloliu/zapwire/otlp
 
 go 1.25.0
 
+require github.com/stretchr/testify v1.11.1
+
 require (
-	go.opentelemetry.io/otel/trace v1.44.0
-	go.uber.org/zap v1.28.0
+	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/pmezard/go-difflib v1.0.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
