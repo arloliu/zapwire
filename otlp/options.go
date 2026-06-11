@@ -100,6 +100,8 @@ type ExportError struct {
 	Warning    bool   // partial success with Rejected == 0 and a message
 	Message    string // partial-success error_message or short response excerpt
 	Err        error  // wrapped underlying error, may be nil
+
+	retryAfter time.Duration // parsed Retry-After; internal to the retry loop
 }
 
 func (e *ExportError) Error() string {

@@ -69,3 +69,20 @@ func (c *core) Sync() error { return c.out.Sync() }
 func NewEncoder(opts ...Option) zapcore.Encoder {
 	return newEncoder(applyOptions(opts))
 }
+
+// NewCore wires NewEncoder + NewWriter into the custom trace-aware core
+// (design §2.2) plus its Writer, which the caller must Close. One opts list
+// feeds all three ends (each option sets only the fields it owns).
+//
+// Returns:
+//   - zapcore.Core: the OTLP core (sticky zap.Any("context", ctx) works here)
+//   - *Writer: the underlying exporter; the caller owns it and must Close it
+//   - error: a non-nil error from NewWriter (e.g. ErrNoEndpoint)
+func NewCore(endpoint string, level zapcore.LevelEnabler, opts ...Option) (zapcore.Core, *Writer, error) {
+	w, err := NewWriter(endpoint, opts...)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return newOTLPCore(newEncoder(applyOptions(opts)), w, level), w, nil
+}
