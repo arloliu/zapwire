@@ -6,10 +6,10 @@ COVERAGE_DIR          := ./.coverage
 COVERAGE_OUT          := $(COVERAGE_DIR)/coverage.out
 LINTER_GOMOD          := -modfile=.golangci-lint.go.mod
 GOLANGCI_LINT_VERSION := 2.11.4
-MODULES               := . ./otlp
+MODULES               := . ./otlp ./otlp/internal/conformance
 
 .DEFAULT_GOAL := help
-.PHONY: help test test-race integration bench coverage lint linter-update linter-version clean-linter-cache fmt vet gomod-tidy generate examples ci
+.PHONY: help test test-race integration integration-otel bench coverage lint linter-update linter-version clean-linter-cache fmt vet gomod-tidy generate examples ci
 
 ## help: Show this help message
 help:
@@ -29,11 +29,14 @@ integration:
 		exit 1; fi
 	@go test ./fluent -tags fluentbit -run Integration -race -count=1 -v -timeout=$(TEST_TIMEOUT)
 
+## integration-otel: Run the opt-in otel-collector integration test (needs OTELCOL_BIN)
+integration-otel:
+	cd otlp && go test -tags otelcollector -run TestCollectorEndToEnd -v ./...
+
 ## bench: Run benchmarks (no race; report allocations)
 bench:
-	@go test ./... -run='^$$' -bench=. -benchmem -timeout=$(TEST_TIMEOUT)
+	@for m in $(MODULES); do (cd $$m && go test ./... -run='^$$' -bench=. -benchmem -timeout=$(TEST_TIMEOUT)) || exit 1; done
 
-# TODO(otlp Task 12): loop over $(MODULES) and merge profiles
 ## coverage: Generate a coverage profile
 coverage:
 	@mkdir -p $(COVERAGE_DIR)

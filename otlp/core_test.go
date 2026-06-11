@@ -135,6 +135,15 @@ func TestSugaredInjectKVs(t *testing.T) {
 	// Lone injected field, zero kvs: no dangling-key noise.
 	sugar.Infow("m", InjectTraceKVs(ctx)...)
 	require.Empty(t, attrKeys(t, sink.last(t)))
+
+	// Design §9: typed Field mixed into kvs. zap's sweetenFields processes
+	// typed Fields before pairs, so "typed" precedes "k" in the output.
+	// The prepended span-context field is consumed by the OTLP core and never
+	// appears as an attribute.
+	sugar.Infow("m", InjectTraceKVs(ctx, zap.String("typed", "field"), "k", "v")...)
+	rec = sink.last(t)
+	require.Equal(t, wantTID[:], traceIDOf(t, rec))
+	require.Equal(t, []string{"typed", "k"}, attrKeys(t, rec))
 }
 
 func TestTeeRendersEagerHelperLegibly(t *testing.T) {

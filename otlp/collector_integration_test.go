@@ -1,0 +1,113 @@
+//go:build otelcollector
+
+package otlp
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+)
+
+// Requires a real otel-collector binary; set OTELCOL_BIN (default
+// /usr/local/bin/otelcol). Run via `make integration-otel`.
+func TestCollectorEndToEnd(t *testing.T) {
+	bin := os.Getenv("OTELCOL_BIN")
+	if bin == "" {
+		bin = "/usr/local/bin/otelcol"
+	}
+	if _, err := os.Stat(bin); err != nil {
+		t.Skipf("otel-collector binary not found at %s", bin)
+	}
+
+	dir := t.TempDir()
+	outFile := filepath.Join(dir, "out.json")
+	port := freePort(t)
+	cfg := fmt.Sprintf(`
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 127.0.0.1:%d
+exporters:
+  file:
+    path: %s
+service:
+  pipelines:
+    logs:
+      receivers: [otlp]
+      exporters: [file]
+`, port, outFile)
+	cfgFile := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(cfgFile, []byte(cfg), 0o644))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "--config", cfgFile)
+	require.NoError(t, cmd.Start())
+	defer func() { cancel(); _ = cmd.Wait() }()
+	waitPort(t, port)
+
+	core, w, err := NewCore(fmt.Sprintf("http://127.0.0.1:%d", port), zapcore.InfoLevel,
+		WithServiceName("itest"), WithFlushInterval(50*time.Millisecond))
+	require.NoError(t, err)
+	logger := zap.New(core)
+	sc, sctx := testSpanContext(t)
+	logger.Info("integration", zap.String("k", "v"), SpanContext(sctx))
+	require.NoError(t, w.Sync())
+	require.NoError(t, w.Close())
+
+	// Poll the file exporter output for our record with intact trace IDs.
+	require.Eventually(t, func() bool {
+		data, err := os.ReadFile(outFile)
+		if err != nil {
+			return false
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			if line == "" {
+				continue
+			}
+			var doc map[string]any
+			if json.Unmarshal([]byte(line), &doc) != nil {
+				continue
+			}
+			s := string(data)
+			_ = doc
+			if strings.Contains(s, "integration") &&
+				strings.Contains(strings.ToLower(s), strings.ToLower(sc.TraceID().String())) &&
+				strings.Contains(strings.ToLower(s), strings.ToLower(sc.SpanID().String())) {
+				return true
+			}
+		}
+		return false
+	}, 15*time.Second, 200*time.Millisecond, "record with trace IDs must reach the collector")
+}
+
+func freePort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port
+}
+
+func waitPort(t *testing.T, port int) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 100*time.Millisecond)
+		if err == nil {
+			c.Close()
+		}
+		return err == nil
+	}, 15*time.Second, 100*time.Millisecond)
+}
