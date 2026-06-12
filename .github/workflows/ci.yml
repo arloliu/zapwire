@@ -96,3 +96,10 @@ jobs:
         run: make integration
         env:
           ZAPWIRE_FLUENT_BIT_BIN: /opt/fluent-bit/bin/fluent-bit
+
+      # Proves zapwire's OTLP/HTTP exporter is ingested by Fluent Bit's
+      # `opentelemetry` input end to end, reusing the binary installed above.
+      - name: Integration tests (Fluent Bit OTLP)
+        run: make integration-fluentbit
+        env:
+          ZAPWIRE_FLUENT_BIT_BIN: /opt/fluent-bit/bin/fluent-bit
