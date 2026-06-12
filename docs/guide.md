@@ -75,7 +75,7 @@ the raw pieces when [building a Writer by hand](#building-a-writer-by-hand).
 | Fluentd, Fluent-bit, Vector (Fluent input) | `fluent` | Fluent Forward, msgpack `PackedForward` |
 | Vector, Logstash, OTel Collector, anything line-oriented | `ndjson` | newline-delimited JSON |
 | rsyslog, syslog-ng, Vector, Logstash | `syslog` | RFC5424 syslog (JSON body) |
-| OTel Collector, Fluent-bit, Loki ≥3.0, Elastic, Datadog | `otlp` | OTLP/HTTP protobuf logs; trace correlation from `context.Context` |
+| OTel Collector, Fluent-bit, Loki ≥3.0, Elastic, Datadog | `otlp` | OTLP/gRPC or OTLP/HTTP protobuf logs; trace correlation from `context.Context` |
 
 If your processor speaks the Fluent Forward protocol, prefer `fluent` — it is more compact
 (msgpack) and carries an exact event timestamp. Otherwise `ndjson` is the universal option.
@@ -253,11 +253,11 @@ exists too, for the bring-your-own-core pattern, and takes core zapwire options 
 The `otlp` subpackage lives in its own Go module — add it with
 `go get github.com/arloliu/zapwire/otlp`. This keeps OTel dependencies
 (specifically `go.opentelemetry.io/otel/trace`) out of plain zapwire users'
-dependency graphs. The package ships logs as OTLP/HTTP binary protobuf
-(ExportLogsServiceRequest, POST /v1/logs) to any OTLP receiver: the OTel
-Collector, Grafana Loki ≥ 3.0, Elastic, Datadog Agent. **Unlike the other
-subpackages it does not use zapwire.Writer** — it has its own async HTTP
-exporter, so the guide's [Sync vs Async](#sync-vs-async) and
+dependency graphs. The package ships logs as OTLP/HTTP binary protobuf or
+OTLP/gRPC to any OTLP receiver: the OTel Collector, Grafana Loki ≥ 3.0,
+Elastic, Datadog Agent. **Unlike the other subpackages it does not use
+zapwire.Writer** — it has its own async exporter, so the guide's
+[Sync vs Async](#sync-vs-async) and
 [Reconnect, drops & observability](#reconnect-drops--observability)
 sections do not apply to it. Delivery semantics are described
 [below](#otlp-delivery-semantics).
@@ -368,6 +368,79 @@ so the correlation also rides as flat lowercase-hex string attributes the sink c
 Unlike the per-call helper, the encoder option also covers the sticky
 `With(zap.Any("context", ctx))` form, which per-call helpers cannot.
 
+### Choosing a protocol
+
+| Protocol | Default port | Standard default | When to use |
+|---|---|---|---|
+| `http/protobuf` | 4318 | yes — OTel spec recommends | new deployments, any receiver, safest interop |
+| `grpc` | 4317 | — | collector/agent stacks standardised on gRPC |
+
+**gRPC endpoint forms and TLS control.** `NewGRPCWriter` (and `NewGRPCCore`) accepts
+three endpoint forms:
+
+```go
+// Bare host:port — TLS by default (spec: insecure=false).
+// WithInsecure() switches to plaintext h2c.
+w, err := otlp.NewGRPCWriter("collector:4317",
+    otlp.WithInsecure(), // local agent, plaintext h2c
+    otlp.WithServiceName("checkout"),
+)
+
+// http:// scheme — plaintext h2c; scheme wins over WithInsecure (redundant but ok).
+w, err = otlp.NewGRPCWriter("http://collector:4317",
+    otlp.WithServiceName("checkout"),
+)
+
+// https:// scheme — TLS; WithTLSConfig for custom CA or mTLS.
+w, err = otlp.NewGRPCWriter("https://collector:4317",
+    otlp.WithTLSConfig(&tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}),
+    otlp.WithServiceName("checkout"),
+)
+```
+
+Two combinations are construction errors, caught at `NewGRPCWriter`/`NewGRPCCore` time:
+`WithInsecure()` and `WithTLSConfig` together on a bare endpoint (contradictory — with an
+`https://` scheme the scheme wins instead), and `WithTLSConfig` with
+a plaintext endpoint (`http://` scheme, or bare `host:port` + `WithInsecure`). Passing
+`WithInsecure()` alongside an `https://` scheme is not an error — the scheme wins and
+you get TLS; `WithInsecure` is silently ignored in that case.
+
+**`WithHTTPClient` is a no-op on gRPC.** The gRPC transport owns its HTTP/2-only
+internal client; a user-supplied `http.Client` with HTTP/1 enabled would break gRPC
+framing. Use `WithTLSConfig` for TLS customisation on gRPC. Proxies are unsupported
+on the gRPC transport — use HTTP/protobuf if your deployment routes logs through an
+HTTP proxy.
+
+**Env-driven dispatch.** `ProtocolFromEnv` reads `OTEL_EXPORTER_OTLP_LOGS_PROTOCOL`
+then `OTEL_EXPORTER_OTLP_PROTOCOL`; callers dispatch themselves:
+
+```go
+switch otlp.ProtocolFromEnv() {
+case otlp.ProtocolGRPC:
+    w, err = otlp.NewGRPCWriter(otlp.EndpointFromEnv())
+default: // "", http/protobuf, http/json (json is not implemented here)
+    w, err = otlp.NewHTTPWriter(otlp.EndpointFromEnv())
+}
+```
+
+**Performance.** Benchmarked on Linux/amd64 (AMD Ryzen 9 9950X3D) with
+`go test -bench BenchmarkGRPCExport -benchmem -benchtime=2s`. The zapwire side
+measures the full pipeline (Write→queue→batch→assemble→transport); the grpc-go side
+measures proto-marshal+Export only — that asymmetry structurally favours grpc-go, so
+a competitive or better zapwire number is conservative evidence.
+
+| Benchmark | batch | ns/op | B/op | allocs/op |
+|---|---|---|---|---|
+| BenchmarkGRPCExportZapwire | 1 | 35,299 | 17,313 | 192 |
+| BenchmarkGRPCExportZapwire | 64 | 101,914 | 80,050 | 1,080 |
+| BenchmarkGRPCExportZapwire | 512 | 409,710 | 823,723 | 7,371 |
+| BenchmarkGRPCExportGRPCGo | 1 | 25,940 | 11,148 | 168 |
+| BenchmarkGRPCExportGRPCGo | 64 | 95,007 | 58,297 | 930 |
+| BenchmarkGRPCExportGRPCGo | 512 | 515,686 | 386,021 | 6,321 |
+
+At batch 512: zapwire 409,710 ns/op vs grpc-go 515,686 ns/op — zapwire is ~0.79×
+grpc-go (i.e., faster), well within the design's 2× budget.
+
 ### Cost control: send only warn+ to OTel
 
 OTel-native storage (Elastic, Datadog, Grafana Cloud) tends to be meaningfully more
@@ -431,8 +504,9 @@ back to `WarnLevel` when the incident is resolved.
   the encode step, the network round-trip, and collector CPU — it is the cheapest place
   to cut volume.
 
-> Runnable versions: [`examples/otlp-trace-correlation`](../examples/otlp-trace-correlation)
-> and [`examples/otlp-tee-cost-control`](../examples/otlp-tee-cost-control).
+> Runnable versions: [`examples/otlp-trace-correlation`](../examples/otlp-trace-correlation),
+> [`examples/otlp-tee-cost-control`](../examples/otlp-tee-cost-control), and
+> [`examples/otlp-grpc`](../examples/otlp-grpc) (env-driven protocol dispatch, gRPC default).
 
 ---
 
@@ -700,6 +774,13 @@ Core options live in the root package. With `fluent`, pass them via
 
 `fluent`-only options: `WithTag(tag)` (default `"app.logs"`), `WithTimeCodec(c)`
 (default `AutoEpochCodec("ts")`), `WithTimeKey(key)`, `WithZapwireOptions(opts...)`.
+
+`otlp`-only gRPC options (passed to `NewGRPCWriter`/`NewGRPCCore`):
+
+| Option | Default | Effect |
+|---|---|---|
+| `WithInsecure()` | — | plaintext h2c for bare `host:port` endpoints; no-op with `http://` scheme |
+| `WithTLSConfig(c)` | — | custom TLS (CA, mTLS) for `https://` or bare `host:port`; error on plaintext endpoints |
 
 Every numeric/duration option clamps a non-positive value back to its default rather than erroring.
 The dial timeout is a fixed **3s** and is not an option; it applies only on the background reconnect
