@@ -1,6 +1,7 @@
 package otlp
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"maps"
@@ -94,19 +95,30 @@ type RetryConfig struct {
 // exhausted its retry budget, and Warning reports a partial success that
 // rejected nothing.
 type ExportError struct {
-	StatusCode int    // HTTP status; 0 for transport/encode errors
+	// StatusCode is the HTTP status; 0 for transport/encode errors and for
+	// gRPC responses (HTTP 200 by construction — set only when a non-gRPC
+	// intermediary answered without a grpc-status).
+	StatusCode int
+	// GRPCStatus is the gRPC status code (0 = OK); meaningful only on
+	// writers built by NewGRPCWriter/NewGRPCCore.
+	GRPCStatus int
 	Retryable  bool   // whether the failure was in the retryable class
 	Rejected   int64  // partial-success rejected_log_records
 	Warning    bool   // partial success with Rejected == 0 and a message
-	Message    string // partial-success error_message or short response excerpt
+	Message    string // partial-success error_message, grpc-message, or short response excerpt
 	Err        error  // wrapped underlying error, may be nil
 
-	retryAfter time.Duration // parsed Retry-After; internal to the retry loop
+	retryAfter time.Duration // parsed Retry-After / RetryInfo delay; internal to the retry loop
 }
 
 func (e *ExportError) Error() string {
-	return fmt.Sprintf("otlp export: status=%d retryable=%v rejected=%d warning=%v msg=%q err=%v",
-		e.StatusCode, e.Retryable, e.Rejected, e.Warning, e.Message, e.Err)
+	g := ""
+	if e.GRPCStatus != 0 {
+		g = fmt.Sprintf(" grpc=%d", e.GRPCStatus)
+	}
+
+	return fmt.Sprintf("otlp export: status=%d%s retryable=%v rejected=%d warning=%v msg=%q err=%v",
+		e.StatusCode, g, e.Retryable, e.Rejected, e.Warning, e.Message, e.Err)
 }
 
 func (e *ExportError) Unwrap() error { return e.Err }
@@ -136,6 +148,8 @@ type options struct {
 	headers         map[string]string
 	client          *http.Client
 	compression     Compression
+	insecure        bool
+	tlsConfig       *tls.Config
 	errFn           func(error)
 }
 
@@ -313,7 +327,8 @@ func WithFlushInterval(d time.Duration) Option { return func(o *options) { o.flu
 // WithDropPolicy selects the queue-full policy (default DropNewest).
 func WithDropPolicy(p DropPolicy) Option { return func(o *options) { o.dropPolicy = p } }
 
-// WithTimeout bounds each HTTP attempt (default 10s).
+// WithTimeout bounds each export attempt (default 10s); on the gRPC path it
+// is also sent as the grpc-timeout request header.
 func WithTimeout(d time.Duration) Option { return func(o *options) { o.timeout = d } }
 
 // WithRetry overrides retry/backoff bounds; zero fields keep defaults.
@@ -329,7 +344,9 @@ func WithHeaders(h map[string]string) Option {
 	}
 }
 
-// WithHTTPClient supplies the http.Client (TLS, proxies); nil keeps the default.
+// WithHTTPClient supplies the http.Client (TLS, proxies); nil keeps the
+// default. OTLP/HTTP only — the gRPC transport owns a private HTTP/2 client
+// and ignores this option.
 func WithHTTPClient(c *http.Client) Option {
 	return func(o *options) {
 		if c != nil {
@@ -340,6 +357,23 @@ func WithHTTPClient(c *http.Client) Option {
 
 // WithCompression selects request compression (default NoCompression).
 func WithCompression(c Compression) Option { return func(o *options) { o.compression = c } }
+
+// WithInsecure selects plaintext h2c for SCHEME-LESS gRPC endpoints
+// ("host:4317"). An explicit http/https scheme always takes precedence (OTel
+// exporter-spec precedence, design 2026-06-12 §5). No-op on the HTTP path.
+func WithInsecure() Option { return func(o *options) { o.insecure = true } }
+
+// WithTLSConfig supplies the gRPC TLS configuration (custom CA, mTLS) and
+// implies TLS for scheme-less endpoints. Combining it with a plaintext
+// endpoint ("http://" scheme, or bare + WithInsecure) is a construction
+// error. No-op on the HTTP path — use WithHTTPClient there. nil is ignored.
+func WithTLSConfig(c *tls.Config) Option {
+	return func(o *options) {
+		if c != nil {
+			o.tlsConfig = c
+		}
+	}
+}
 
 // WithErrorHandler observes ship-path events (*ExportError); nil keeps the
 // no-op. The handler is invoked synchronously from Write (oversized records)
@@ -384,4 +418,32 @@ func EndpointFromEnv() string {
 	}
 
 	return os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+}
+
+// Protocol is an OTLP transport protocol name as used by
+// OTEL_EXPORTER_OTLP_PROTOCOL.
+type Protocol string
+
+const (
+	ProtocolGRPC         Protocol = "grpc"
+	ProtocolHTTPProtobuf Protocol = "http/protobuf"
+)
+
+// ProtocolFromEnv resolves OTEL_EXPORTER_OTLP_LOGS_PROTOCOL then
+// OTEL_EXPORTER_OTLP_PROTOCOL. Returns "" when neither is set. Explicit and
+// opt-in like EndpointFromEnv — zapwire never reads env behind the caller's
+// back (design §5.5). Callers dispatch themselves:
+//
+//	switch otlp.ProtocolFromEnv() {
+//	case otlp.ProtocolGRPC:
+//	    w, err = otlp.NewGRPCWriter(otlp.EndpointFromEnv())
+//	default: // "", http/protobuf, http/json (json is not implemented here)
+//	    w, err = otlp.NewHTTPWriter(otlp.EndpointFromEnv())
+//	}
+func ProtocolFromEnv() Protocol {
+	if v := os.Getenv("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL"); v != "" {
+		return Protocol(v)
+	}
+
+	return Protocol(os.Getenv("OTEL_EXPORTER_OTLP_PROTOCOL"))
 }

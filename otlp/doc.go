@@ -46,6 +46,16 @@
 // trace_id/span_id hex strings for non-OTLP sinks; on THIS core they are
 // plain attributes, not correlation.
 //
+// # Transports
+//
+// Two OTLP transports are provided. NewWriter/NewHTTPWriter (and
+// NewCore/NewHTTPCore) speak OTLP/HTTP — binary protobuf POSTed to /v1/logs,
+// default port 4318, the OTel spec's default protocol. NewGRPCWriter (and
+// NewGRPCCore) speak OTLP/gRPC — a unary LogsService/Export call, default
+// port 4317, implemented with a hand-rolled stdlib HTTP/2 client (no grpc-go
+// dependency). ProtocolFromEnv reads OTEL_EXPORTER_OTLP_[LOGS_]PROTOCOL for
+// env-driven dispatch between them.
+//
 // # Delivery semantics
 //
 // Async-only, at-most-once: bounded queue, count/byte/interval batching,

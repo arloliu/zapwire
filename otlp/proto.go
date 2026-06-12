@@ -34,7 +34,7 @@ func appendTaggedUvarint(dst []byte, tag byte, v uint64) []byte { //nolint:unpar
 	return appendUvarint(append(dst, tag), v)
 }
 
-func appendTaggedVarint(dst []byte, tag byte, v int64) []byte { //nolint:unused
+func appendTaggedVarint(dst []byte, tag byte, v int64) []byte {
 	return appendVarint(append(dst, tag), v)
 }
 
@@ -168,4 +168,48 @@ func findVarint(b []byte, field int) (uint64, error) {
 	}
 
 	return out, nil
+}
+
+// forEachLenField invokes fn for every len-delimited occurrence of field in
+// b, in order. fn returns false to stop early. Unknown fields are skipped
+// with the same wire-type discipline as findField.
+func forEachLenField(b []byte, field int, fn func(payload []byte) bool) error {
+	for len(b) > 0 {
+		tag, n := binary.Uvarint(b)
+		if n <= 0 {
+			return errTruncatedResponse
+		}
+		b = b[n:]
+		num, wt := int(tag>>3), int(tag&0x7)
+		var adv int
+		switch wt {
+		case 0: // varint
+			_, vn := binary.Uvarint(b)
+			if vn <= 0 {
+				return errTruncatedResponse
+			}
+			adv = vn
+		case 1: // fixed64
+			adv = 8
+		case 2: // len-delimited
+			l, ln := binary.Uvarint(b)
+			if ln <= 0 || uint64(len(b)-ln) < l { //nolint:gosec
+				return errTruncatedResponse
+			}
+			if num == field && !fn(b[ln:ln+int(l)]) { //nolint:gosec
+				return nil
+			}
+			adv = ln + int(l) //nolint:gosec
+		case 5: // fixed32
+			adv = 4
+		default:
+			return errTruncatedResponse
+		}
+		if len(b) < adv {
+			return errTruncatedResponse
+		}
+		b = b[adv:]
+	}
+
+	return nil
 }
