@@ -9,9 +9,10 @@ import (
 var recordPool = buffer.NewPool()
 
 type encConfig struct {
-	severityOf    func(zapcore.Level) SeverityNumber
-	callerAttrs   bool
-	loggerNameKey string
+	severityOf            func(zapcore.Level) SeverityNumber
+	callerAttrs           bool
+	loggerNameKey         string
+	traceCorrelationAttrs bool
 }
 
 // encoder is the OTLP zapcore.Encoder: EncodeEntry emits the bare LogRecord
@@ -31,9 +32,10 @@ func newEncoder(o options) *encoder {
 	e := &encoder{
 		encState: *newEncState(),
 		cfg: encConfig{
-			severityOf:    o.severityOf,
-			callerAttrs:   o.callerAttrs,
-			loggerNameKey: o.loggerNameKey,
+			severityOf:            o.severityOf,
+			callerAttrs:           o.callerAttrs,
+			loggerNameKey:         o.loggerNameKey,
+			traceCorrelationAttrs: o.traceCorrelationAttrs,
 		},
 	}
 	e.armSink()
@@ -80,6 +82,17 @@ func (e *encoder) EncodeEntry(ent zapcore.Entry, fields []zapcore.Field) (*buffe
 		}
 
 		applyField(work, fields[i])
+	}
+
+	// Opt-in flat correlation attributes (WithTraceCorrelationAttributes): added
+	// AFTER the per-call loop so the final, last-wins sc/scSet is honored, and
+	// via addKVRoot so they pin to the root frame (never inside a user namespace)
+	// — the form non-OTLP sinks can read after FB converts OTLP. They are
+	// ADDITIVE: the proto trace fields below are still emitted unchanged. Pinned
+	// order: [With, meta, per-call attrs, trace_id, span_id, <sealed namespaces>].
+	if e.cfg.traceCorrelationAttrs && scSet && sc.IsValid() {
+		work.addKVRoot("trace_id", work.anyString(sc.TraceID().String()))
+		work.addKVRoot("span_id", work.anyString(sc.SpanID().String()))
 	}
 
 	work.sealAll()

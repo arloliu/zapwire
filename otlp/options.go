@@ -121,9 +121,10 @@ type options struct {
 	scopeName      string
 	scopeVersion   string
 	// encoder end
-	severityOf    func(zapcore.Level) SeverityNumber
-	callerAttrs   bool
-	loggerNameKey string
+	severityOf            func(zapcore.Level) SeverityNumber
+	callerAttrs           bool
+	loggerNameKey         string
+	traceCorrelationAttrs bool
 	// writer end
 	queueSize       int
 	batchSize       int
@@ -276,6 +277,25 @@ func WithCallerAttributes(on bool) Option { return func(o *options) { o.callerAt
 // WithLoggerNameKey sets the attribute key carrying Entry.LoggerName (default
 // "logger"; empty disables the attribute).
 func WithLoggerNameKey(k string) Option { return func(o *options) { o.loggerNameKey = k } }
+
+// WithTraceCorrelationAttributes emits flat lowercase-hex "trace_id"/"span_id"
+// STRING ATTRIBUTES on every record that carries a valid span context, IN
+// ADDITION to the LogRecord trace_id/span_id/flags proto fields. Both are
+// derived from the same captured span context, so the attributes cover every
+// intake form uniformly — per-call (zap.Any("context", ctx) / SpanContext),
+// eager (the SpanContext helper through With), and the sticky
+// With(zap.Any("context", ctx)) form that per-call helpers cannot reach.
+// Default off.
+//
+// It is intended for pipelines that CONVERT OTLP to a non-OTLP sink (e.g.
+// Fluent Bit's opentelemetry input → Elasticsearch / Loki / stdout), where the
+// proto-field trace context is stranded in the receiver's group metadata and
+// is not reachable as record-body keys. OTLP-native backends already read the
+// proto trace fields and do not need this. For non-OTLP cores or per-call
+// control, use TraceCorrelationFields instead.
+func WithTraceCorrelationAttributes(on bool) Option {
+	return func(o *options) { o.traceCorrelationAttrs = on }
+}
 
 // WithQueueSize bounds the ingest queue (records; default 2048).
 func WithQueueSize(n int) Option { return func(o *options) { o.queueSize = n } }

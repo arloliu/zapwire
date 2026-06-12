@@ -197,6 +197,27 @@ func TestCorrelationFieldsAreAttributesOnOTLPCore(t *testing.T) {
 	require.Equal(t, []string{"trace_id", "span_id"}, attrKeys(t, rec))
 }
 
+func TestTraceCorrelationAttributesStickyWith(t *testing.T) {
+	// THE motivating case for WithTraceCorrelationAttributes: a sticky
+	// With(zap.Any("context", ctx)) carries no per-call field, so the per-call
+	// TraceCorrelationFields helper cannot cover it — only the encoder option,
+	// which derives the attributes from the captured (stashed) span context.
+	sc, ctx := testSpanContext(t)
+	core, sink := newTestCore(t, WithTraceCorrelationAttributes(true))
+	logger := zap.New(core)
+
+	logger.With(zap.Any("context", ctx)).Info("sticky")
+	rec := sink.last(t)
+
+	// Proto-field correlation still set (the sticky ctx reached the encoder).
+	wantTID := sc.TraceID()
+	require.Equal(t, wantTID[:], traceIDOf(t, rec))
+	// AND the flat string attributes ride alongside.
+	require.Equal(t, []string{"trace_id", "span_id"}, attrKeys(t, rec))
+	require.Equal(t, sc.TraceID().String(), attrValueOf(t, rec, "trace_id"))
+	require.Equal(t, sc.SpanID().String(), attrValueOf(t, rec, "span_id"))
+}
+
 func TestChainedWithStashOverwrite(t *testing.T) {
 	// Chained With calls: the second With's span context wins (later stash
 	// overwrites earlier), and persistent fields accumulate across both clones.

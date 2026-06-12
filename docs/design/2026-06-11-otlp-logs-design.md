@@ -521,6 +521,7 @@ convention).
 | `WithSeverityMapper(func(zapcore.Level) SeverityNumber)` | §3.2 table | encoder |
 | `WithCallerAttributes(bool)` | `true` | encoder |
 | `WithLoggerNameKey(string)` | `"logger"` (empty disables) | encoder |
+| `WithTraceCorrelationAttributes(bool)` *(post-consensus addition for OTLP→non-OTLP conversion pipelines, e.g. Fluent Bit)* | `false` | encoder |
 | `WithQueueSize(int)` | 2048 | writer |
 | `WithBatchSize(int)` | 512 | writer |
 | `WithMaxRequestBytes(int)` | 4 MiB (uncompressed) | writer |
