@@ -2,6 +2,7 @@ package otlp
 
 import (
 	"compress/gzip"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // fastRetry keeps tests quick while exercising the real loop.
@@ -26,8 +29,10 @@ func newTestWriter(t *testing.T, url string, opts ...Option) (*Writer, *[]error)
 		WithRetry(fastRetry),
 		WithErrorHandler(func(e error) { errs = append(errs, e) }),
 	}, opts...)
-	w, err := newWriterCore(url, applyOptions(opts))
+	o := applyOptions(opts)
+	tr, err := newHTTPTransport(url, o)
 	require.NoError(t, err)
+	w := newWriterCore(tr, o)
 	t.Cleanup(w.cancel)
 
 	return w, &errs
@@ -226,4 +231,56 @@ func TestParseRetryAfter(t *testing.T) {
 	require.Greater(t, d, 30*time.Second)
 	// HTTP-date in the past → 0.
 	require.Zero(t, parseRetryAfter(time.Now().Add(-time.Minute).UTC().Format(http.TimeFormat)))
+}
+
+func TestNewGRPCWriterValidation(t *testing.T) {
+	_, err := NewGRPCWriter("")
+	require.ErrorIs(t, err, ErrNoEndpoint)
+
+	_, err = NewGRPCWriter("http://localhost:4317/v1/logs")
+	require.Error(t, err) // path rejected
+
+	_, err = NewGRPCWriter("localhost:4317", WithInsecure(), WithTLSConfig(&tls.Config{MinVersion: tls.VersionTLS12}))
+	require.Error(t, err) // insecure × TLS conflict
+
+	_, err = NewGRPCWriter("localhost:4317", WithInsecure(), WithHeaders(map[string]string{"grpc-timeout": "1S"}))
+	require.Error(t, err) // reserved header
+}
+
+func TestNewGRPCWriterEndToEnd(t *testing.T) {
+	f := newFakeGRPCServer(t, func(w http.ResponseWriter, _ *http.Request) { okResponse(w, nil) })
+	w, err := NewGRPCWriter(f.srv.URL) // http:// scheme → h2c
+	require.NoError(t, err)
+	_, _ = w.Write([]byte("rec"))
+	require.NoError(t, w.Sync())
+	require.NoError(t, w.Close())
+	require.Zero(t, w.DroppedLogs())
+	require.Len(t, f.received(), 1)
+}
+
+func TestNewHTTPWriterIsNewWriter(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	w, err := NewHTTPWriter(srv.URL)
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+
+	_, err = NewHTTPWriter("")
+	require.ErrorIs(t, err, ErrNoEndpoint)
+}
+
+func TestNewGRPCCore(t *testing.T) {
+	f := newFakeGRPCServer(t, func(w http.ResponseWriter, _ *http.Request) { okResponse(w, nil) })
+	core, w, err := NewGRPCCore(f.srv.URL, zapcore.InfoLevel)
+	require.NoError(t, err)
+	logger := zap.New(core)
+	logger.Info("hello grpc")
+	require.NoError(t, w.Sync())
+	require.NoError(t, w.Close())
+	require.Len(t, f.received(), 1)
+
+	_, _, err = NewGRPCCore("", zapcore.InfoLevel)
+	require.ErrorIs(t, err, ErrNoEndpoint)
 }

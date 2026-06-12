@@ -1,13 +1,8 @@
 package otlp
 
 import (
-	"bytes"
-	"compress/gzip"
 	"context"
-	"io"
 	"math/rand/v2"
-	"net/http"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -15,22 +10,19 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-// Writer is the OTLP/HTTP exporter: a zapcore.WriteSyncer with a bounded
-// queue, a single flush goroutine, and OTLP retry semantics (design §5).
+// Writer is the OTLP exporter (OTLP/HTTP via NewWriter/NewHTTPWriter,
+// OTLP/gRPC via NewGRPCWriter): a zapcore.WriteSyncer with a bounded queue,
+// a single flush goroutine, and OTLP retry semantics (design §5).
 // Async-only — Sync() is the flush barrier.
 type Writer struct {
-	endpoint    string
-	client      *http.Client
-	headers     map[string]string
-	compression Compression
-	timeout     time.Duration
-	retry       RetryConfig
-	maxBytes    int
-	batchSize   int
-	flushEvery  time.Duration
-	dropPolicy  DropPolicy
-	errFn       func(error)
-	env         *envelope
+	tr         transport
+	retry      RetryConfig
+	maxBytes   int
+	batchSize  int
+	flushEvery time.Duration
+	dropPolicy DropPolicy
+	errFn      func(error)
+	env        *envelope
 
 	queue    chan []byte
 	flushReq chan chan struct{}
@@ -41,44 +33,36 @@ type Writer struct {
 	// admit closes the closed-check→enqueue window: Write holds it shared
 	// across check+send; Close takes it exclusively after setting closed, so
 	// no enqueue can land after the final drain starts (the root writer's
-	// lifecycle-barrier discipline, writer.go:175-188,373-384).
-	admit sync.RWMutex //nolint:unused // Task 9: Write/Close lifecycle barrier.
+	// lifecycle-barrier discipline; see Write and Close).
+	admit sync.RWMutex
 
 	dropped   atomic.Uint64
-	closed    atomic.Bool //nolint:unused // Task 9: set by Close, read by Write.
-	closeOnce sync.Once   //nolint:unused // Task 9: guards Close idempotency.
+	closed    atomic.Bool
+	closeOnce sync.Once
 }
 
 var _ zapcore.WriteSyncer = (*Writer)(nil)
 
-// newWriterCore builds a Writer WITHOUT starting the flush goroutine
-// (NewWriter starts it; tests drive export directly).
-func newWriterCore(endpoint string, o options) (*Writer, error) {
-	ep, err := resolveEndpoint(endpoint)
-	if err != nil {
-		return nil, err
-	}
+// newWriterCore builds a Writer around a transport WITHOUT starting the
+// flush goroutine (the constructors start it; tests drive export directly).
+func newWriterCore(tr transport, o options) *Writer {
 	w := &Writer{
-		endpoint:    ep,
-		client:      o.client,
-		headers:     o.headers,
-		compression: o.compression,
-		timeout:     o.timeout,
-		retry:       o.retry,
-		maxBytes:    o.maxRequestBytes,
-		batchSize:   o.batchSize,
-		flushEvery:  o.flushInterval,
-		dropPolicy:  o.dropPolicy,
-		errFn:       o.errFn,
-		env:         newEnvelope(o),
-		queue:       make(chan []byte, o.queueSize),
-		flushReq:    make(chan chan struct{}),
-		done:        make(chan struct{}),
+		tr:         tr,
+		retry:      o.retry,
+		maxBytes:   o.maxRequestBytes,
+		batchSize:  o.batchSize,
+		flushEvery: o.flushInterval,
+		dropPolicy: o.dropPolicy,
+		errFn:      o.errFn,
+		env:        newEnvelope(o),
+		queue:      make(chan []byte, o.queueSize),
+		flushReq:   make(chan chan struct{}),
+		done:       make(chan struct{}),
 	}
-	//nolint:gosec // G118: w.cancel is invoked by Close (Task 9) and by test cleanup.
+	//nolint:gosec // G118: w.cancel is invoked by Close and by test cleanup.
 	w.ctx, w.cancel = context.WithCancel(context.Background())
 
-	return w, nil
+	return w
 }
 
 // DroppedLogs reports records not confirmed delivered (queue overflow,
@@ -101,24 +85,24 @@ func (w *Writer) export(records [][]byte, allowRetry bool) {
 	}
 	raw := w.env.assemble(getFrameBuf(), records)
 	defer putFrameBuf(raw)
-	body := raw
-	compressed := false
-	if w.compression == Gzip {
-		var gz bytes.Buffer
-		zw := gzip.NewWriter(&gz)
-		if _, err := zw.Write(raw); err == nil && zw.Close() == nil {
-			body, compressed = gz.Bytes(), true
-		} else {
-			// gzip failure: ship uncompressed rather than lose the batch.
-			w.errFn(&ExportError{Message: "gzip failed; sent uncompressed"})
-		}
+	p := w.tr.prepare(raw)
+	if p.warn != nil {
+		w.errFn(p.warn)
 	}
 
 	deadline := time.Now().Add(w.retry.MaxElapsed)
 	delay := w.retry.Initial
 	for {
-		expErr := w.attempt(body, compressed)
+		accept, expErr := w.tr.attempt(p)
 		if expErr == nil {
+			switch {
+			case accept == nil: // clean accept
+			case accept.rejected > 0:
+				w.drop(int(accept.rejected), accept.event)
+			case accept.event != nil:
+				w.errFn(accept.event)
+			}
+
 			return
 		}
 		if !allowRetry || !expErr.Retryable || w.ctx.Err() != nil {
@@ -149,105 +133,58 @@ func (w *Writer) export(records [][]byte, allowRetry bool) {
 	}
 }
 
-// attempt performs one POST. Its context is Background+timeout — NOT the
-// lifecycle ctx — so Close never cancels a request the server may have
-// already accepted (§5.4); Close interrupts the backoff sleeps instead.
-func (w *Writer) attempt(body []byte, compressed bool) *ExportError {
-	ctx, cancel := context.WithTimeout(context.Background(), w.timeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.endpoint, bytes.NewReader(body))
-	if err != nil {
-		return &ExportError{Err: err}
-	}
-	req.Header.Set("Content-Type", "application/x-protobuf")
-	if compressed {
-		req.Header.Set("Content-Encoding", "gzip")
-	}
-	for k, v := range w.headers {
-		req.Header.Set(k, v)
-	}
-	resp, err := w.client.Do(req)
-	if err != nil {
-		return &ExportError{Err: err} // transport errors are non-retryable (§5.3)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-
-	switch {
-	case resp.StatusCode == http.StatusOK:
-		rejected, msg, derr := decodePartialSuccess(respBody)
-		switch {
-		case derr != nil:
-			// Accepted; the malformed response body is observability-only.
-			w.errFn(&ExportError{StatusCode: 200, Err: derr})
-		case rejected > 0:
-			w.drop(int(rejected), &ExportError{StatusCode: 200, Rejected: rejected, Message: msg}) //nolint:gosec
-		case msg != "":
-			w.errFn(&ExportError{StatusCode: 200, Warning: true, Message: msg})
-		}
-
-		return nil // never retried (§5.3)
-	case retryableStatus(resp.StatusCode):
-		return &ExportError{
-			StatusCode: resp.StatusCode,
-			Retryable:  true,
-			Message:    excerpt(respBody),
-			retryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
-		}
-	default: // 400, 413, anything else: non-retryable
-		return &ExportError{StatusCode: resp.StatusCode, Message: excerpt(respBody)}
-	}
-}
-
-// retryableStatus implements the OTLP/HTTP retryable class (§5.3).
-func retryableStatus(code int) bool {
-	switch code {
-	case http.StatusTooManyRequests, http.StatusBadGateway,
-		http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-		return true
-	}
-
-	return false
-}
-
-// parseRetryAfter accepts delta-seconds or an HTTP-date (spec clarification).
-func parseRetryAfter(h string) time.Duration {
-	if h == "" {
-		return 0
-	}
-	if secs, err := strconv.Atoi(h); err == nil && secs > 0 {
-		return time.Duration(secs) * time.Second
-	}
-	if at, err := http.ParseTime(h); err == nil {
-		if d := time.Until(at); d > 0 {
-			return d
-		}
-	}
-
-	return 0
-}
-
-func excerpt(b []byte) string {
-	const max = 256 //nolint:predeclared // local response-excerpt cap; shadowing the builtin is harmless here
-	if len(b) > max {
-		b = b[:max]
-	}
-
-	return string(b)
-}
-
 // NewWriter builds the OTLP/HTTP exporter and starts its flush goroutine.
-// The caller owns the Writer and must Close it. Only writer/envelope-end
-// options take effect (design §6).
+// Equivalent to NewHTTPWriter. The caller owns the Writer and must Close it.
+// Only writer/envelope-end options take effect (design §6).
 //
 // Returns:
 //   - *Writer: the exporter; satisfies zapcore.WriteSyncer
 //   - error: ErrNoEndpoint or an endpoint validation error
 func NewWriter(endpoint string, opts ...Option) (*Writer, error) {
-	w, err := newWriterCore(endpoint, applyOptions(opts))
+	o := applyOptions(opts)
+	tr, err := newHTTPTransport(endpoint, o)
 	if err != nil {
 		return nil, err
 	}
+	w := newWriterCore(tr, o)
+	go w.run()
+
+	return w, nil
+}
+
+// NewHTTPWriter is the explicit symmetric counterpart of NewGRPCWriter; it
+// is exactly NewWriter (OTLP/HTTP, the spec's default protocol).
+//
+// Returns:
+//   - *Writer: the exporter; satisfies zapcore.WriteSyncer
+//   - error: ErrNoEndpoint or an endpoint validation error
+func NewHTTPWriter(endpoint string, opts ...Option) (*Writer, error) {
+	return NewWriter(endpoint, opts...)
+}
+
+// NewGRPCWriter builds the OTLP/gRPC exporter and starts its flush
+// goroutine. Endpoint forms (design 2026-06-12 §5):
+//
+//	"host:4317"          TLS (spec default); WithInsecure() selects h2c
+//	"http://host:4317"   plaintext h2c (scheme wins)
+//	"https://host:4317"  TLS (scheme wins); WithTLSConfig for custom CA/mTLS
+//
+// URL paths are rejected — gRPC always posts to the fixed method path. The
+// transport owns its HTTP/2-only client (WithHTTPClient is a no-op here)
+// and does not traverse proxies. The caller owns the Writer and must Close
+// it.
+//
+// Returns:
+//   - *Writer: the exporter; satisfies zapcore.WriteSyncer
+//   - error: ErrNoEndpoint, endpoint validation, option conflicts, or
+//     reserved WithHeaders keys
+func NewGRPCWriter(endpoint string, opts ...Option) (*Writer, error) {
+	o := applyOptions(opts)
+	tr, err := newGRPCTransport(endpoint, o)
+	if err != nil {
+		return nil, err
+	}
+	w := newWriterCore(tr, o)
 	go w.run()
 
 	return w, nil
@@ -394,6 +331,7 @@ func (w *Writer) Close() error {
 		w.admit.Unlock() //nolint:staticcheck // barrier, not a critical section
 		w.cancel()
 		<-w.done
+		w.tr.close()
 	})
 
 	return nil

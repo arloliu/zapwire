@@ -93,6 +93,83 @@ service:
 	}, 15*time.Second, 200*time.Millisecond, "record with trace IDs must reach the collector")
 }
 
+// TestCollectorEndToEndGRPC ships through NewGRPCCore to a real otel-collector
+// OTLP/gRPC receiver (h2c) and asserts the file-exporter output — the same
+// oracle as the HTTP variant.
+func TestCollectorEndToEndGRPC(t *testing.T) {
+	bin := os.Getenv("OTELCOL_BIN")
+	if bin == "" {
+		bin = "/usr/local/bin/otelcol"
+	}
+	if _, err := os.Stat(bin); err != nil {
+		t.Skipf("otel-collector binary not found at %s", bin)
+	}
+
+	dir := t.TempDir()
+	outFile := filepath.Join(dir, "out.json")
+	port := freePort(t)
+	cfg := fmt.Sprintf(`
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 127.0.0.1:%d
+exporters:
+  file:
+    path: %s
+service:
+  pipelines:
+    logs:
+      receivers: [otlp]
+      exporters: [file]
+`, port, outFile)
+	cfgFile := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(cfgFile, []byte(cfg), 0o644))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "--config", cfgFile)
+	require.NoError(t, cmd.Start())
+	defer func() { cancel(); _ = cmd.Wait() }()
+	waitPort(t, port)
+
+	core, w, err := NewGRPCCore(fmt.Sprintf("127.0.0.1:%d", port), zapcore.InfoLevel,
+		WithInsecure(),
+		WithServiceName("itest-grpc"), WithFlushInterval(50*time.Millisecond),
+	)
+	require.NoError(t, err)
+	logger := zap.New(core)
+	logger.Info("grpc end to end", zap.String("transport", "grpc"))
+	require.NoError(t, w.Sync())
+	require.NoError(t, w.Close())
+
+	// Poll the file exporter output for our record.
+	require.Eventually(t, func() bool {
+		data, err := os.ReadFile(outFile)
+		if err != nil {
+			return false
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			if line == "" {
+				continue
+			}
+			var doc map[string]any
+			if json.Unmarshal([]byte(line), &doc) != nil {
+				continue
+			}
+			s := string(data)
+			_ = doc
+			if strings.Contains(s, "grpc end to end") &&
+				strings.Contains(s, "transport") &&
+				strings.Contains(s, "grpc") &&
+				strings.Contains(s, "itest-grpc") {
+				return true
+			}
+		}
+		return false
+	}, 15*time.Second, 200*time.Millisecond, "record must reach the collector")
+}
+
 func freePort(t *testing.T) int {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")

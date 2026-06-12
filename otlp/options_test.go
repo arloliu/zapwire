@@ -155,3 +155,22 @@ func TestExportError(t *testing.T) {
 	require.Contains(t, e.Error(), "503")
 	require.Contains(t, e.Error(), "busy")
 }
+
+func TestExportErrorGRPCStatus(t *testing.T) {
+	e := &ExportError{GRPCStatus: 14, Retryable: true, Message: "unavailable"}
+	require.Contains(t, e.Error(), "grpc=14")
+	// HTTP-only errors must not mention grpc.
+	require.NotContains(t, (&ExportError{StatusCode: 503}).Error(), "grpc=")
+}
+
+func TestProtocolFromEnv(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "")
+	t.Setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "")
+	require.Equal(t, Protocol(""), ProtocolFromEnv())
+
+	t.Setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
+	require.Equal(t, ProtocolGRPC, ProtocolFromEnv())
+
+	t.Setenv("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "http/protobuf")
+	require.Equal(t, ProtocolHTTPProtobuf, ProtocolFromEnv(), "signal-specific wins")
+}

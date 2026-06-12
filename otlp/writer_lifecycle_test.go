@@ -1,6 +1,7 @@
 package otlp
 
 import (
+	"encoding/base64"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -426,4 +427,69 @@ func TestNewCoreEndToEnd(t *testing.T) {
 	reqs, recs := rc.snapshot()
 	require.Equal(t, 1, reqs)
 	require.Equal(t, []int{1}, recs)
+}
+
+// grpcLifecycleWriter builds a started gRPC writer against a fake server.
+func grpcLifecycleWriter(t *testing.T, handler http.HandlerFunc, opts ...Option) (*Writer, *fakeGRPCServer) {
+	t.Helper()
+	f := newFakeGRPCServer(t, handler)
+	w, err := NewGRPCWriter(f.srv.URL, opts...)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = w.Close() })
+
+	return w, f
+}
+
+func TestGRPCSyncBarrierFlushesAll(t *testing.T) {
+	w, f := grpcLifecycleWriter(t, func(w http.ResponseWriter, _ *http.Request) { okResponse(w, nil) },
+		WithBatchSize(2), WithFlushInterval(time.Hour)) // ticker out of the picture
+	for range 5 {
+		_, _ = w.Write([]byte("r"))
+	}
+	require.NoError(t, w.Sync())
+	require.Zero(t, w.DroppedLogs())
+	require.GreaterOrEqual(t, len(f.received()), 3) // 5 records at batch size 2 → ≥3 exports
+}
+
+func TestGRPCRetryInfoDelayHonored(t *testing.T) {
+	var mu sync.Mutex
+	calls := 0
+	w, f := grpcLifecycleWriter(t, func(rw http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		calls++
+		first := calls == 1
+		mu.Unlock()
+		if first {
+			det := base64.RawStdEncoding.EncodeToString(statusBin(14, "throttled", 50*time.Millisecond, true))
+			trailersOnlyError(rw, 14, "throttled", det)
+
+			return
+		}
+		okResponse(rw, nil)
+	}, WithRetry(RetryConfig{Initial: time.Hour, MaxInterval: time.Hour, MaxElapsed: time.Hour}))
+	// Initial backoff is 1h — only the 50ms RetryInfo delay can make the
+	// retry happen within the test budget.
+	start := time.Now()
+	_, _ = w.Write([]byte("r"))
+	require.NoError(t, w.Sync())
+	require.Zero(t, w.DroppedLogs())
+	require.Less(t, time.Since(start), 10*time.Second)
+	require.Len(t, f.received(), 2) // first attempt + post-RetryInfo retry
+}
+
+func TestGRPCCloseDrainsSingleAttempt(t *testing.T) {
+	var mu sync.Mutex
+	calls := 0
+	w, _ := grpcLifecycleWriter(t, func(rw http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		trailersOnlyError(rw, 14, "down", "") // retryable — but Close drain is single-attempt
+	}, WithRetry(RetryConfig{Initial: time.Hour, MaxInterval: time.Hour, MaxElapsed: time.Hour}))
+	_, _ = w.Write([]byte("r"))
+	require.NoError(t, w.Close())
+	require.EqualValues(t, 1, w.DroppedLogs())
+	mu.Lock()
+	defer mu.Unlock()
+	require.LessOrEqual(t, calls, 2) // flush-tick attempt at most once + drain attempt
 }
