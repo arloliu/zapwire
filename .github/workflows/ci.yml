@@ -38,8 +38,15 @@ jobs:
         run: make lint
 
   test:
-    name: Test
+    name: Test (Go ${{ matrix.go }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Minimum supported version (the go.mod directive) and the latest
+        # stable release — the two-release support window the README's
+        # stability statement promises.
+        go: ["1.25.x", "stable"]
     steps:
       - name: Check out code
         uses: actions/checkout@v6
@@ -47,7 +54,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version: ${{ matrix.go }}
           cache-dependency-path: |
             go.sum
             otlp/go.sum
@@ -67,6 +74,41 @@ jobs:
       # so they are guarded against API drift, mirroring `make ci`.
       - name: Build & vet examples
         run: make examples
+
+  apicompat:
+    name: API compatibility (gorelease)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      # gorelease diffs each module's exported API against its latest release
+      # on the module proxy and fails this job on incompatible changes. A
+      # DELIBERATE breaking change (pre-v1) should land with a changelog entry
+      # and may temporarily relax this step in the same PR — the gate exists
+      # so a break is always an explicit decision, never an accident.
+      - name: gorelease (root module)
+        run: |
+          out=$(go run golang.org/x/exp/cmd/gorelease@latest 2>&1) || true
+          echo "$out"
+          if echo "$out" | grep -q "incompatible changes"; then
+            echo "::error::incompatible API changes in the root module"; exit 1
+          fi
+
+      - name: gorelease (otlp module)
+        working-directory: otlp
+        run: |
+          out=$(go run golang.org/x/exp/cmd/gorelease@latest 2>&1) || true
+          echo "$out"
+          if echo "$out" | grep -q "incompatible changes"; then
+            echo "::error::incompatible API changes in the otlp module"; exit 1
+          fi
 
   integration:
     name: Integration (Fluent Bit)
