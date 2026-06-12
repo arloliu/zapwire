@@ -75,7 +75,7 @@ the raw pieces when [building a Writer by hand](#building-a-writer-by-hand).
 | Fluentd, Fluent-bit, Vector (Fluent input) | `fluent` | Fluent Forward, msgpack `PackedForward` |
 | Vector, Logstash, OTel Collector, anything line-oriented | `ndjson` | newline-delimited JSON |
 | rsyslog, syslog-ng, Vector, Logstash | `syslog` | RFC5424 syslog (JSON body) |
-| OTel Collector, Loki ≥3.0, Elastic, Datadog | `otlp` | OTLP/HTTP protobuf logs; trace correlation from `context.Context` |
+| OTel Collector, Fluent-bit, Loki ≥3.0, Elastic, Datadog | `otlp` | OTLP/HTTP protobuf logs; trace correlation from `context.Context` |
 
 If your processor speaks the Fluent Forward protocol, prefer `fluent` — it is more compact
 (msgpack) and carries an exact event timestamp. Otherwise `ndjson` is the universal option.
@@ -347,8 +347,9 @@ values: a `Retryable` error has already exhausted its retry budget.
 
 ### Receivers and endpoint resolution
 
-The package is tested end-to-end against the OTel Collector (`make integration-otel`)
-and Vector's opentelemetry source (`make integration-vector`). The endpoint URL is
+The package is tested end-to-end against the OTel Collector (`make integration-otel`),
+Vector's opentelemetry source (`make integration-vector`), and Fluent Bit's
+`opentelemetry` input (`make integration-fluentbit`). The endpoint URL is
 validated at construction time; `/v1/logs` is appended only when the path is empty or `"/"` (bare slash).
 
 `EndpointFromEnv()` reads `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` first, then

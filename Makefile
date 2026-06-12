@@ -9,7 +9,7 @@ GOLANGCI_LINT_VERSION := 2.11.4
 MODULES               := . ./otlp ./otlp/internal/conformance
 
 .DEFAULT_GOAL := help
-.PHONY: help workspace test test-race integration integration-otel integration-vector bench coverage lint linter-update linter-version clean-linter-cache fmt vet gomod-tidy generate examples ci
+.PHONY: help workspace test test-race integration integration-otel integration-vector integration-fluentbit bench coverage lint linter-update linter-version clean-linter-cache fmt vet gomod-tidy generate examples ci
 
 ## help: Show this help message
 help:
@@ -44,6 +44,10 @@ integration-otel:
 ## integration-vector: Run the opt-in Vector end-to-end test (needs vector or VECTOR_BIN)
 integration-vector:
 	cd otlp && go test -tags vector -run TestVectorEndToEnd -v ./...
+
+## integration-fluentbit: Run the opt-in Fluent Bit OTLP ingestion test (uses ZAPWIRE_FLUENT_BIT_BIN or /opt/fluent-bit/bin/fluent-bit)
+integration-fluentbit:
+	cd otlp && go test -tags fluentbit -run TestFluentBitOTLPEndToEnd -v ./...
 
 ## bench: Run benchmarks (no race; report allocations)
 bench:
