@@ -356,7 +356,71 @@ validated at construction time; `/v1/logs` is appended only when the path is emp
 empty or `"/"`). Environment handling is explicit and opt-in — zapwire never reads env
 variables behind the caller's back.
 
-> Runnable version: [`examples/otlp-trace-correlation`](../examples/otlp-trace-correlation).
+### Cost control: send only warn+ to OTel
+
+OTel-native storage (Elastic, Datadog, Grafana Cloud) tends to be meaningfully more
+expensive per record than an EFK or Loki tier. The `otlp` core's `LevelEnabler` is the
+client-side cost gate: every entry is tested against it in `Check` before any encoding,
+queueing, or network work happens — sub-level entries cost nothing beyond the test.
+
+The most common deployment pairs a cheap sink (console, EFK, Loki via another core) at
+`Info` with an OTLP core gated to `Warn+`. Use `zap.WrapCore` to graft the OTLP core
+onto an existing logger and `zapcore.NewTee` to fan out:
+
+```go
+otelCore, w, err := otlp.NewCore(endpoint, zapcore.WarnLevel,
+    otlp.WithServiceName("checkout"))
+if err != nil { /* handle */ }
+defer w.Close()
+
+logger = logger.WithOptions(zap.WrapCore(func(orig zapcore.Core) zapcore.Core {
+    return zapcore.NewTee(orig, otelCore)
+}))
+```
+
+`Info` and `Debug` entries flow only to the original core; `Warn` and above go to both.
+
+**Runtime dial.** A `zap.AtomicLevel` as the enabler turns cost into a knob you can
+turn without restarting:
+
+```go
+lvl := zap.NewAtomicLevelAt(zapcore.WarnLevel)
+
+otelCore, w, err := otlp.NewCore(endpoint, lvl,
+    otlp.WithServiceName("checkout"))
+// ...
+
+// During an incident: open Info to OTel for richer signal.
+lvl.SetLevel(zapcore.InfoLevel)
+// ... investigate ...
+lvl.SetLevel(zapcore.WarnLevel) // shut the gate again
+
+// Remote control: AtomicLevel also implements http.Handler.
+http.Handle("/log/level", lvl)
+```
+
+`lvl.SetLevel(zapcore.InfoLevel)` opens `Info` to the OTLP core immediately; set it
+back to `WarnLevel` when the incident is resolved.
+
+**Caveats:**
+
+- **Wrap first, With after.** Fields attached via `logger.With` *before* the
+  `WrapCore` call live in the original core only; they are not visible to the new OTLP
+  core. If you need those fields in OTel, reattach them after `WrapCore`.
+- **The tee'd OTLP core is not sampled.** `zap.NewProduction` wraps its core in a
+  sampler; the OTLP core added via the tee is *not* subject to that sampler — usually
+  desirable for `Warn+`, but if you open `Info` for a prolonged period, wrap the OTLP
+  core in `zapcore.NewSamplerWithOptions` yourself to cap the volume.
+- **The caller still owns the Writer.** `logger.Sync()` reaches `w` through the tee,
+  but you must call `w.Close()` explicitly at shutdown — `logger.Sync()`/`Close()` on
+  the tee do not substitute for it.
+- **Client-side gating is additive, not a replacement.** Collector-side filtering
+  (filter processor, OTTL) is complementary, but client-side level gating also saves
+  the encode step, the network round-trip, and collector CPU — it is the cheapest place
+  to cut volume.
+
+> Runnable versions: [`examples/otlp-trace-correlation`](../examples/otlp-trace-correlation)
+> and [`examples/otlp-tee-cost-control`](../examples/otlp-tee-cost-control).
 
 ---
 
