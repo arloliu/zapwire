@@ -19,6 +19,7 @@ go run ./ndjson-tcp
 | [`async-observability`](async-observability) | **Async** mode + tuning, and the `DroppedLogs` / `ReconnectCount` / `IsConnected` health counters |
 | [`tee-console`](tee-console) | Fan-out with `zapcore.NewTee`: console + wire, with a different level per core |
 | [`otlp-trace-correlation`](otlp-trace-correlation) | OTLP/HTTP protobuf export with trace correlation; the three correlation forms and the `infoCtx` app-layer boundary; graceful shutdown and `DroppedLogs` |
+| [`otlp-tee-cost-control`](otlp-tee-cost-control) | Cost-control tee pattern: console core at Info + OTLP core gated to Warn+ via `zap.AtomicLevel`; runtime dial; expected drops reported |
 
 ## A note on layout
 
