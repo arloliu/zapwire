@@ -137,3 +137,17 @@ bounded `WithWriteTimeout`; async mode never blocks on enqueue).
 See the **[User Guide](docs/guide.md)** for the full treatment, and
 [`docs/design/2026-06-07-zapwire-design.md`](docs/design/2026-06-07-zapwire-design.md) for the
 design rationale.
+
+## Versioning & stability
+
+The repository hosts two modules that version independently under
+[SemVer](https://semver.org): `github.com/arloliu/zapwire` (root, with the
+`fluent`, `ndjson`, and `syslog` subpackages) and
+`github.com/arloliu/zapwire/otlp`. See [CHANGELOG.md](CHANGELOG.md).
+
+**What the compatibility promise covers** (from each module's v1.0.0 onward):
+the exported Go API of every non-`internal` package. **What it does not
+freeze:** wire-level *defaults* may be adjusted in minor releases when a spec
+or receiver ecosystem moves (always called out in the changelog); anything
+under `internal/`; and the minimum supported Go version, which tracks the two
+most recent Go releases.
