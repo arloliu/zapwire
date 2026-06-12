@@ -3,9 +3,15 @@
 package otlp
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -150,6 +156,192 @@ pipeline:
 	}, 15*time.Second, 200*time.Millisecond,
 		"record must reach Fluent Bit with service name, attribute, severity and the sampled span context\nstdout:\n%s\nstderr:\n%s",
 		stdout, stderr)
+}
+
+// TestFluentBitOTLPRelayFidelity proves the RELAY pipeline shape preserves trace
+// context byte-for-byte: zapwire OTLP core → Fluent Bit `opentelemetry` input →
+// Fluent Bit `opentelemetry` OUTPUT → an httptest "OTLP backend" that captures the
+// raw POST body. Fluent Bit reconstructs the OTLP envelope on the output side, so
+// the trace_id/span_id bytes must survive even though FB re-encodes (the whole
+// request is NOT byte-identical to what zapwire sent — FB re-frames it). We assert
+// the relayed request's LogRecord trace_id (field 9) and span_id (field 10) equal
+// the fixture's bytes, decoding with the package's dependency-free findField walker
+// (NO protobuf imports — the otlp module never depends on google.golang.org/protobuf).
+//
+// Observed against Fluent Bit v5.0.6 (CI-pinned): with grpc=off the otel output
+// POSTs binary protobuf (Content-Type application/x-protobuf) to logs_uri; the body
+// is uncompressed by default (compress unset). The handler tolerates gzip via
+// Content-Encoding in case a future/default build compresses.
+func TestFluentBitOTLPRelayFidelity(t *testing.T) {
+	bin := os.Getenv(fluentBitBinEnvFB)
+	if bin == "" {
+		bin = "/opt/fluent-bit/bin/fluent-bit"
+	}
+	if info, err := os.Stat(bin); err != nil || info.IsDir() {
+		t.Skipf("Fluent Bit binary not found at %s (set %s)", bin, fluentBitBinEnvFB)
+	}
+
+	// The "OTLP backend": capture every relayed POST body (decompressed).
+	var mu sync.Mutex
+	var bodies [][]byte
+	var sawPaths []string
+	var sawEnc []string
+	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		var body []byte
+		if r.Header.Get("Content-Encoding") == "gzip" {
+			if zr, err := gzip.NewReader(r.Body); err == nil {
+				body, _ = io.ReadAll(zr)
+				_ = zr.Close()
+			}
+		} else {
+			body, _ = io.ReadAll(r.Body)
+		}
+		mu.Lock()
+		bodies = append(bodies, body)
+		sawPaths = append(sawPaths, r.URL.Path)
+		sawEnc = append(sawEnc, r.Header.Get("Content-Encoding"))
+		mu.Unlock()
+		// OTLP success: empty ExportLogsServiceResponse.
+		rw.Header().Set("Content-Type", "application/x-protobuf")
+		rw.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	backURL, err := url.Parse(srv.URL)
+	require.NoError(t, err)
+	backHost, backPort, err := net.SplitHostPort(backURL.Host)
+	require.NoError(t, err)
+
+	dir := t.TempDir()
+	inPort := freePortFB(t)
+
+	// otel input on a free port; otel OUTPUT relays to the httptest backend.
+	// grpc=off forces HTTP/protobuf; tls=off because httptest is plaintext;
+	// logs_uri matches the backend path zapwire/httptest serve at root.
+	cfg := fmt.Sprintf(`service:
+  flush: 0.2
+  log_level: info
+pipeline:
+  inputs:
+    - name: opentelemetry
+      listen: 127.0.0.1
+      port: %d
+  outputs:
+    - name: opentelemetry
+      match: '*'
+      host: %s
+      port: %s
+      grpc: off
+      tls: off
+      logs_uri: /v1/logs
+`, inPort, backHost, backPort)
+	cfgFile := filepath.Join(dir, "fluent-bit.yaml")
+	require.NoError(t, os.WriteFile(cfgFile, []byte(cfg), 0o600))
+
+	stdout := &syncBufferFB{}
+	stderr := &syncBufferFB{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "-c", cfgFile)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	require.NoError(t, cmd.Start())
+
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
+	defer func() {
+		cancel()
+		select {
+		case <-waitCh:
+		case <-time.After(3 * time.Second):
+			t.Logf("fluent-bit did not exit within 3s of cancel\nstderr:\n%s", stderr.String())
+		}
+	}()
+
+	waitPortFB(t, inPort, waitCh, stderr)
+
+	core, w, err := NewCore(fmt.Sprintf("http://127.0.0.1:%d", inPort), zapcore.InfoLevel,
+		WithServiceName("fbrelay"), WithFlushInterval(50*time.Millisecond))
+	require.NoError(t, err)
+	logger := zap.New(core)
+	sc, sctx := testSpanContext(t)
+	const msg = "relay-integration"
+	logger.Info(msg, zap.String("k", "v"), SpanContext(sctx))
+	require.NoError(t, w.Sync())
+	require.NoError(t, w.Close())
+
+	wantTID, wantSID := sc.TraceID(), sc.SpanID()
+
+	// Poll until a relayed body carries our record with intact trace IDs. FB may
+	// batch/re-frame; we accept any captured body whose first LogRecord matches.
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, b := range bodies {
+			if len(b) == 0 {
+				continue
+			}
+			rec := firstLogRecordFB(b)
+			if rec == nil {
+				continue
+			}
+			tid, err := findField(rec, 9)
+			if err != nil || !bytes.Equal(tid, wantTID[:]) {
+				continue
+			}
+			sid, err := findField(rec, 10)
+			if err != nil || !bytes.Equal(sid, wantSID[:]) {
+				continue
+			}
+			if !bytes.Contains(b, []byte(msg)) {
+				continue
+			}
+
+			return true
+		}
+
+		return false
+	}, 20*time.Second, 200*time.Millisecond,
+		"relayed OTLP request must carry the fixture trace_id/span_id and message\npaths=%v enc=%v\nstderr:\n%s",
+		&sawPathsFB{&mu, &sawPaths}, &sawPathsFB{&mu, &sawEnc}, stderr)
+}
+
+// firstLogRecordFB walks an ExportLogsServiceRequest payload to the first
+// LogRecord using only the package's dependency-free findField walker:
+// resource_logs(1) → scope_logs(2) → log_records(2). Returns nil if any level
+// is absent. findField returns the LAST occurrence at each level, which is fine
+// here: the relay test ships exactly one record, so there is a single chain.
+func firstLogRecordFB(req []byte) []byte {
+	rl, err := findField(req, 1) // ExportLogsServiceRequest.resource_logs
+	if err != nil || rl == nil {
+		return nil
+	}
+	sl, err := findField(rl, 2) // ResourceLogs.scope_logs
+	if err != nil || sl == nil {
+		return nil
+	}
+	rec, err := findField(sl, 2) // ScopeLogs.log_records
+	if err != nil {
+		return nil
+	}
+
+	return rec
+}
+
+// sawPathsFB defers the lock-guarded join of a captured slice to failure-message
+// build time (require.Eventually evaluates format args eagerly, but %s calls
+// String() lazily), so the dump reflects what FB actually sent.
+type sawPathsFB struct {
+	mu *sync.Mutex
+	s  *[]string
+}
+
+func (p *sawPathsFB) String() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return strings.Join(*p.s, ",")
 }
 
 // freePortFB returns a currently-free 127.0.0.1 port. There is an unavoidable

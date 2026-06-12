@@ -45,9 +45,9 @@ integration-otel:
 integration-vector:
 	cd otlp && go test -tags vector -run TestVectorEndToEnd -v ./...
 
-## integration-fluentbit: Run the opt-in Fluent Bit OTLP ingestion test (uses ZAPWIRE_FLUENT_BIT_BIN or /opt/fluent-bit/bin/fluent-bit)
+## integration-fluentbit: Run the opt-in Fluent Bit OTLP ingestion + relay-fidelity tests (uses ZAPWIRE_FLUENT_BIT_BIN or /opt/fluent-bit/bin/fluent-bit)
 integration-fluentbit:
-	cd otlp && go test -tags fluentbit -run TestFluentBitOTLPEndToEnd -v ./...
+	cd otlp && go test -tags fluentbit -run 'TestFluentBit' -v ./...
 
 ## bench: Run benchmarks (no race; report allocations)
 bench:

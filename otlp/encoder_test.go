@@ -179,6 +179,84 @@ func TestEncodeEntryTraceFields(t *testing.T) {
 	require.Nil(t, tid)
 }
 
+// attrValueOf decodes the string_value of the top-level attribute with the
+// given key (returns "" if absent). It mirrors attrKeys but descends into the
+// matched KeyValue to read AnyValue.string_value (field 1).
+func attrValueOf(t *testing.T, rec []byte, key string) string {
+	t.Helper()
+
+	b := rec
+	for len(b) > 0 {
+		tag, n := uvarint(b)
+		require.Positive(t, n)
+		b = b[n:]
+		num, wt := int(tag>>3), int(tag&0x7)
+
+		switch wt {
+		case 0:
+			_, vn := uvarint(b)
+			b = b[vn:]
+		case 1:
+			b = b[8:]
+		case 2:
+			l, ln := uvarint(b)
+			payload := b[ln : ln+int(l)]
+			if num == 6 {
+				k, err := findField(payload, 1)
+				require.NoError(t, err)
+				if string(k) == key {
+					av, err := findField(payload, 2) // KeyValue.value (AnyValue)
+					require.NoError(t, err)
+					sv, err := findField(av, 1) // AnyValue.string_value
+					require.NoError(t, err)
+
+					return string(sv)
+				}
+			}
+			b = b[ln+int(l):]
+		case 5:
+			b = b[4:]
+		}
+	}
+
+	return ""
+}
+
+func TestTraceCorrelationAttributes(t *testing.T) {
+	sc, ctx := testSpanContext(t)
+
+	// Option ON + per-call SpanContext: BOTH the proto trace fields AND the two
+	// flat string attributes are present, with correct lowercase-hex values.
+	e := NewEncoder(WithTraceCorrelationAttributes(true))
+	rec := encodeRecord(t, e, testEntry(), SpanContext(ctx), zap.String("k", "v"))
+
+	tid, err := findField(rec, 9)
+	require.NoError(t, err)
+	wantTID := sc.TraceID()
+	require.Equal(t, wantTID[:], tid, "proto trace_id still emitted")
+	sid, err := findField(rec, 10)
+	require.NoError(t, err)
+	wantSID := sc.SpanID()
+	require.Equal(t, wantSID[:], sid, "proto span_id still emitted")
+
+	require.Equal(t, []string{"k", "trace_id", "span_id"}, attrKeys(t, rec),
+		"flat attributes land after per-call attrs, in trace_id/span_id order")
+	require.Equal(t, sc.TraceID().String(), attrValueOf(t, rec, "trace_id"))
+	require.Equal(t, sc.SpanID().String(), attrValueOf(t, rec, "span_id"))
+
+	// Option ON + no valid span: no attributes added.
+	rec = encodeRecord(t, e, testEntry(), SpanContext(nil), zap.String("k", "v")) //nolint:staticcheck
+	require.Equal(t, []string{"k"}, attrKeys(t, rec))
+
+	// Default OFF + valid span: no attributes (regression pin) — proto fields only.
+	off := NewEncoder()
+	rec = encodeRecord(t, off, testEntry(), SpanContext(ctx), zap.String("k", "v"))
+	require.Equal(t, []string{"k"}, attrKeys(t, rec))
+	tid, err = findField(rec, 9)
+	require.NoError(t, err)
+	require.Equal(t, wantTID[:], tid, "proto trace_id unaffected by default-off option")
+}
+
 func TestTracePrecedenceAndLastWins(t *testing.T) {
 	scA, ctxA := testSpanContext(t)
 	scB := trace.NewSpanContext(trace.SpanContextConfig{

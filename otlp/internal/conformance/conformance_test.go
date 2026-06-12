@@ -179,6 +179,42 @@ func TestRecordRoundTripRollback(t *testing.T) {
 	require.Equal(t, "badarrError", rec.Attributes[1].Key)
 }
 
+func TestRecordRoundTripTraceCorrelationAttributes(t *testing.T) {
+	// WithTraceCorrelationAttributes adds flat "trace_id"/"span_id" string
+	// attributes ALONGSIDE the proto trace fields. Round-trip through the
+	// official stubs proves byte-identity (the new field-6 KeyValues are
+	// well-formed and ordered before flags/trace_id/span_id), and the decoded
+	// record carries BOTH the proto TraceId/SpanId AND the two hex attributes.
+	sc, ctx := spanCtx(t)
+	enc := otlp.NewEncoder(otlp.WithTraceCorrelationAttributes(true))
+	buf, err := enc.EncodeEntry(zapcore.Entry{
+		Level: zapcore.InfoLevel, Time: time.Unix(7, 42), Message: "msg",
+	}, []zapcore.Field{otlp.SpanContext(ctx)})
+	require.NoError(t, err)
+	defer buf.Free()
+	ours := append([]byte(nil), buf.Bytes()...)
+
+	var rec logspb.LogRecord
+	require.NoError(t, proto.Unmarshal(ours, &rec), "our bytes must decode")
+	remarshaled, err := proto.Marshal(&rec)
+	require.NoError(t, err)
+	require.Equal(t, remarshaled, ours, "byte identity with official marshaling")
+
+	// Proto trace fields intact.
+	wantT, wantS := sc.TraceID(), sc.SpanID()
+	require.Equal(t, wantT[:], rec.TraceId)
+	require.Equal(t, wantS[:], rec.SpanId)
+	require.EqualValues(t, 1, rec.Flags)
+
+	// Flat string attributes present with lowercase-hex values.
+	attrs := map[string]string{}
+	for _, kv := range rec.Attributes {
+		attrs[kv.Key] = kv.Value.GetStringValue()
+	}
+	require.Equal(t, sc.TraceID().String(), attrs["trace_id"])
+	require.Equal(t, sc.SpanID().String(), attrs["span_id"])
+}
+
 func TestFullRequestRoundTrip(t *testing.T) {
 	var mu sync.Mutex
 	var bodies [][]byte

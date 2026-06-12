@@ -357,6 +357,17 @@ validated at construction time; `/v1/logs` is appended only when the path is emp
 empty or `"/"`). Environment handling is explicit and opt-in — zapwire never reads env
 variables behind the caller's back.
 
+**Fluent Bit: relay vs convert.** Relaying through Fluent Bit's `opentelemetry`
+input → `opentelemetry` output to an OTLP backend preserves trace IDs byte-for-byte —
+Fluent Bit reconstructs the OTLP envelope, so `trace_id`/`span_id` survive (pinned by
+the relay-fidelity integration test). Converting instead to a non-OTLP sink (Elasticsearch,
+Loki, stdout, …) strands the proto-field trace context in Fluent Bit's group metadata,
+where pipeline processors cannot reach it. For those conversion pipelines, enable
+`WithTraceCorrelationAttributes(true)` (or add per-call `TraceCorrelationFields(ctx)`)
+so the correlation also rides as flat lowercase-hex string attributes the sink can read.
+Unlike the per-call helper, the encoder option also covers the sticky
+`With(zap.Any("context", ctx))` form, which per-call helpers cannot.
+
 ### Cost control: send only warn+ to OTel
 
 OTel-native storage (Elastic, Datadog, Grafana Cloud) tends to be meaningfully more
