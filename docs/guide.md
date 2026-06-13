@@ -75,7 +75,7 @@ the raw pieces when [building a Writer by hand](#building-a-writer-by-hand).
 | Fluentd, Fluent-bit, Vector (Fluent input) | `fluent` | Fluent Forward, msgpack `PackedForward` |
 | Vector, Logstash, OTel Collector, anything line-oriented | `ndjson` | newline-delimited JSON |
 | rsyslog, syslog-ng, Vector, Logstash | `syslog` | RFC5424 syslog (JSON body) |
-| OTel Collector, Fluent-bit, Loki ≥3.0, Elastic, Datadog | `otlp` | OTLP/gRPC or OTLP/HTTP protobuf logs; trace correlation from `context.Context` |
+| OTel Collector, Fluent-bit, Loki ≥3.0, Elastic, Datadog | `otlp` | OTLP/gRPC or OTLP/HTTP (protobuf or JSON) logs; trace correlation from `context.Context` |
 
 If your processor speaks the Fluent Forward protocol, prefer `fluent` — it is more compact
 (msgpack) and carries an exact event timestamp. Otherwise `ndjson` is the universal option.
@@ -377,6 +377,18 @@ Unlike the per-call helper, the encoder option also covers the sticky
 |---|---|---|---|
 | `http/protobuf` | 4318 | yes — OTel spec recommends | new deployments, any receiver, safest interop |
 | `grpc` | 4317 | — | collector/agent stacks standardised on gRPC |
+| `http/json` | 4318 | — | receivers that only accept JSON; debugging (human-readable wire payloads) |
+
+**OTLP/JSON.** `WithEncoding(otlp.JSON)` switches the HTTP transport to the spec's
+JSON Protobuf Encoding (`Content-Type: application/json`): lowerCamelCase field
+names, lowercase-hex `traceId`/`spanId`, integer `severityNumber`, 64-bit integers
+as decimal strings. The protobuf encode path is untouched — each batch is
+transcoded once at ship time, so JSON mode pays one extra pass + allocation per
+batch; keep protobuf (the default) or gRPC for throughput-sensitive paths. Two
+caveats: `WithEncoding(JSON)` is a construction error on the gRPC constructors
+(OTLP/gRPC is protobuf by definition), and `WithMaxRequestBytes` continues to cap
+the **protobuf-equivalent** request size — the JSON wire body is typically 1.5–3×
+larger, so lower the cap accordingly when targeting a receiver's body limit.
 
 **gRPC endpoint forms and TLS control.** `NewGRPCWriter` (and `NewGRPCCore`) accepts
 three endpoint forms:
@@ -421,7 +433,9 @@ then `OTEL_EXPORTER_OTLP_PROTOCOL`; callers dispatch themselves:
 switch otlp.ProtocolFromEnv() {
 case otlp.ProtocolGRPC:
     w, err = otlp.NewGRPCWriter(otlp.EndpointFromEnv())
-default: // "", http/protobuf, http/json (json is not implemented here)
+case otlp.ProtocolHTTPJSON:
+    w, err = otlp.NewHTTPWriter(otlp.EndpointFromEnv(), otlp.WithEncoding(otlp.JSON))
+default: // "", http/protobuf
     w, err = otlp.NewHTTPWriter(otlp.EndpointFromEnv())
 }
 ```
