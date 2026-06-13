@@ -123,6 +123,11 @@ type grpcTransport struct {
 var _ transport = (*grpcTransport)(nil)
 
 func newGRPCTransport(endpoint string, o options) (*grpcTransport, error) {
+	if o.encoding != Protobuf {
+		// OTLP/gRPC is protobuf by definition — WithEncoding(JSON) is a
+		// deterministic config error and fails at construction (§4.4).
+		return nil, fmt.Errorf("otlp: WithEncoding is not supported on the gRPC transport (OTLP/gRPC is always protobuf)")
+	}
 	base, useTLS, err := resolveGRPCEndpoint(endpoint, o.insecure, o.tlsConfig != nil)
 	if err != nil {
 		return nil, err

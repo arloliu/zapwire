@@ -4,19 +4,24 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
 // httpTransport is the OTLP/HTTP ship layer — the v0.1.0 behavior, verbatim,
-// behind the transport seam.
+// behind the transport seam. jsonOn selects the OTLP/JSON encoding mode
+// (design 2026-06-13): transcode at prepare, application/json content type,
+// JSON partial-success resolution.
 type httpTransport struct {
 	endpoint string
 	client   *http.Client
 	headers  map[string]string
 	gzipOn   bool
+	jsonOn   bool
 	timeout  time.Duration
 }
 
@@ -27,19 +32,33 @@ func newHTTPTransport(endpoint string, o options) (*httpTransport, error) {
 	if err != nil {
 		return nil, err
 	}
+	if o.encoding > JSON {
+		return nil, fmt.Errorf("otlp: undefined Encoding %d", o.encoding)
+	}
 
 	return &httpTransport{
 		endpoint: ep,
 		client:   o.client,
 		headers:  o.headers,
 		gzipOn:   o.compression == Gzip,
+		jsonOn:   o.encoding == JSON,
 		timeout:  o.timeout,
 	}, nil
 }
 
-// prepare applies whole-body gzip (Content-Encoding) once per batch. A gzip
-// failure ships uncompressed rather than losing the batch (v0.1.0 behavior).
+// prepare transcodes to OTLP/JSON when configured, then applies whole-body
+// gzip (Content-Encoding) — both once per batch (a retrying batch must not
+// re-transcode or re-gzip). A gzip failure ships uncompressed rather than
+// losing the batch (v0.1.0 behavior); a transcode failure CANNOT ship
+// (there is no valid body) and surfaces as prepared.fail → counted drop.
 func (t *httpTransport) prepare(msg []byte) prepared {
+	if t.jsonOn {
+		j, err := appendRequestJSON(nil, msg)
+		if err != nil {
+			return prepared{fail: &ExportError{Err: err, Message: "json transcode failed; batch dropped"}}
+		}
+		msg = j
+	}
 	if !t.gzipOn {
 		return prepared{body: msg}
 	}
@@ -66,7 +85,11 @@ func (t *httpTransport) attempt(p prepared) (*acceptance, *ExportError) {
 	if err != nil {
 		return nil, &ExportError{Err: err}
 	}
-	req.Header.Set("Content-Type", "application/x-protobuf")
+	ct := "application/x-protobuf"
+	if t.jsonOn {
+		ct = "application/json"
+	}
+	req.Header.Set("Content-Type", ct)
 	if p.compressed {
 		req.Header.Set("Content-Encoding", "gzip")
 	}
@@ -82,7 +105,7 @@ func (t *httpTransport) attempt(p prepared) (*acceptance, *ExportError) {
 
 	switch {
 	case resp.StatusCode == http.StatusOK:
-		return resolveAccept(respBody, ExportError{StatusCode: http.StatusOK}), nil // never retried (§5.3)
+		return t.resolve(respBody, resp.Header.Get("Content-Type")), nil // never retried (§5.3)
 	case retryableStatus(resp.StatusCode):
 		return nil, &ExportError{
 			StatusCode: resp.StatusCode,
@@ -93,6 +116,25 @@ func (t *httpTransport) attempt(p prepared) (*acceptance, *ExportError) {
 	default: // 400, 413, anything else: non-retryable
 		return nil, &ExportError{StatusCode: resp.StatusCode, Message: excerpt(respBody)}
 	}
+}
+
+// resolve picks the 200-response partial-success decoder. Protobuf mode is
+// v0.1.0 verbatim (no sniffing). In JSON mode the spec requires the server to
+// mirror application/json, but proxies/receivers violate it: an explicit
+// application/x-protobuf response routes to the proto decoder (so a
+// spec-violating-but-honest protobuf partial success still counts its
+// rejections); anything else parses as JSON, with parse failures landing in
+// the malformed/observability-only class (design 2026-06-13 §6).
+func (t *httpTransport) resolve(respBody []byte, respCT string) *acceptance {
+	base := ExportError{StatusCode: http.StatusOK}
+	if !t.jsonOn {
+		return resolveAccept(respBody, base)
+	}
+	if ct, _, _ := strings.Cut(respCT, ";"); strings.TrimSpace(ct) == "application/x-protobuf" {
+		return resolveAccept(respBody, base)
+	}
+
+	return resolveAcceptJSON(respBody, base)
 }
 
 // retryableStatus implements the OTLP/HTTP retryable class (§5.3).

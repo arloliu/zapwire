@@ -15,11 +15,14 @@ type transport interface {
 }
 
 // prepared is the wire-ready body. warn carries non-fatal prepare
-// diagnostics (gzip failure → shipped uncompressed).
+// diagnostics (gzip failure → shipped uncompressed). fail is a fatal
+// prepare outcome (JSON transcode failure): the batch must not ship —
+// the writer counts it as dropped and never calls attempt.
 type prepared struct {
 	body       []byte
 	compressed bool
 	warn       *ExportError
+	fail       *ExportError
 }
 
 // acceptance is a server-accepted outcome that still needs accounting:
@@ -30,13 +33,20 @@ type acceptance struct {
 	event    *ExportError
 }
 
-// resolveAccept decodes an ExportLogsServiceResponse and applies the OTLP
-// partial-success classification (§5.3): rejected>0 →
-// counted drop; rejected==0 with message → warning; malformed body →
-// observability-only (the server accepted the batch). base stamps transport
-// identity (StatusCode 200 for HTTP, GRPCStatus 0 for gRPC).
+// resolveAccept decodes a binary-protobuf ExportLogsServiceResponse and
+// applies the OTLP partial-success classification. resolveAcceptJSON
+// (json.go) is its JSON-mode twin; both share classifyAccept.
 func resolveAccept(respMsg []byte, base ExportError) *acceptance {
 	rejected, msg, derr := decodePartialSuccess(respMsg)
+
+	return classifyAccept(rejected, msg, derr, base)
+}
+
+// classifyAccept applies the OTLP partial-success classification (§5.3):
+// rejected>0 → counted drop; rejected==0 with message → warning; malformed
+// body → observability-only (the server accepted the batch). base stamps
+// transport identity (StatusCode 200 for HTTP, GRPCStatus 0 for gRPC).
+func classifyAccept(rejected int64, msg string, derr error, base ExportError) *acceptance {
 	switch {
 	case derr != nil:
 		e := base

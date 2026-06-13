@@ -86,6 +86,14 @@ func (w *Writer) export(records [][]byte, allowRetry bool) {
 	raw := w.env.assemble(getFrameBuf(), records)
 	defer putFrameBuf(raw)
 	p := w.tr.prepare(raw)
+	if p.fail != nil {
+		// Fatal prepare outcome (JSON transcode failure): there is no valid
+		// body to ship — count the whole batch and never call attempt. Same
+		// on the flush and Close-drain paths (both funnel through here).
+		w.drop(len(records), p.fail)
+
+		return
+	}
 	if p.warn != nil {
 		w.errFn(p.warn)
 	}
