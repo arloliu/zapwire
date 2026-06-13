@@ -113,6 +113,8 @@ jobs:
   integration:
     name: Integration (Fluent Bit)
     runs-on: ubuntu-latest
+    env:
+      FLUENT_BIT_VERSION: "5.0.6"
     steps:
       - name: Check out code
         uses: actions/checkout@v6
@@ -123,14 +125,25 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
+      # Cache the self-contained /opt/fluent-bit tree so the apt download is
+      # skipped on warm runners. Key includes the version so a deliberate bump
+      # busts the cache automatically.
+      - name: Cache Fluent Bit
+        id: cache-fluentbit
+        uses: actions/cache@v4
+        with:
+          path: /opt/fluent-bit
+          key: fluent-bit-${{ env.FLUENT_BIT_VERSION }}-${{ runner.os }}
+
       # The official installer adds the Fluent Bit apt repo and installs the
       # binary to /opt/fluent-bit/bin/fluent-bit. Pin the version (the script
       # reads FLUENT_BIT_RELEASE_VERSION) so an upstream release can never change
       # the decoded output our assertions match; bump it deliberately.
       - name: Install Fluent Bit
+        if: steps.cache-fluentbit.outputs.cache-hit != 'true'
         run: curl -fsSL https://raw.githubusercontent.com/fluent/fluent-bit/master/install.sh | sh
         env:
-          FLUENT_BIT_RELEASE_VERSION: "5.0.6"
+          FLUENT_BIT_RELEASE_VERSION: ${{ env.FLUENT_BIT_VERSION }}
 
       # Runs the opt-in `fluentbit`-tagged tests against the real binary, proving
       # zapwire's Fluent Forward frames stay interoperable end to end.
@@ -150,6 +163,12 @@ jobs:
   integration-otlp:
     name: Integration (otel-collector, Vector)
     runs-on: ubuntu-latest
+    env:
+      OTELCOL_VERSION: "0.154.0"
+      VECTOR_VERSION: "0.56.0"
+      # Stable paths under HOME so actions/cache can restore them across runs.
+      OTELCOL_BIN: /home/runner/tools/otelcol-contrib
+      VECTOR_BIN: /home/runner/tools/vector
     steps:
       - name: Check out code
         uses: actions/checkout@v6
@@ -166,28 +185,47 @@ jobs:
       # behavior our assertions match; bump them deliberately. otelcol-contrib
       # (not core) because the tests use the `file` exporter, which only ships
       # in the contrib distribution.
+      - name: Cache otel-collector
+        id: cache-otelcol
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/tools/otelcol-contrib
+          key: otelcol-contrib-${{ env.OTELCOL_VERSION }}-${{ runner.os }}
+
       - name: Install otel-collector
+        if: steps.cache-otelcol.outputs.cache-hit != 'true'
         run: |
           curl -fsSL -o /tmp/otelcol.tar.gz \
-            https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v0.154.0/otelcol-contrib_0.154.0_linux_amd64.tar.gz
+            https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v${{ env.OTELCOL_VERSION }}/otelcol-contrib_${{ env.OTELCOL_VERSION }}_linux_amd64.tar.gz
           tar -xzf /tmp/otelcol.tar.gz -C /tmp otelcol-contrib
-          /tmp/otelcol-contrib --version
+          mkdir -p /home/runner/tools
+          mv /tmp/otelcol-contrib /home/runner/tools/otelcol-contrib
+
+      - name: Cache Vector
+        id: cache-vector
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/tools/vector
+          key: vector-${{ env.VECTOR_VERSION }}-${{ runner.os }}
 
       - name: Install Vector
+        if: steps.cache-vector.outputs.cache-hit != 'true'
         run: |
           curl -fsSL -o /tmp/vector.tar.gz \
-            https://github.com/vectordotdev/vector/releases/download/v0.56.0/vector-0.56.0-x86_64-unknown-linux-gnu.tar.gz
+            https://github.com/vectordotdev/vector/releases/download/v${{ env.VECTOR_VERSION }}/vector-${{ env.VECTOR_VERSION }}-x86_64-unknown-linux-gnu.tar.gz
           tar -xzf /tmp/vector.tar.gz -C /tmp
-          /tmp/vector-x86_64-unknown-linux-gnu/bin/vector --version
+          mkdir -p /home/runner/tools
+          mv /tmp/vector-x86_64-unknown-linux-gnu/bin/vector /home/runner/tools/vector
+
+      - name: Verify tools
+        run: |
+          ${{ env.OTELCOL_BIN }} --version
+          ${{ env.VECTOR_BIN }} --version
 
       # OTLP/HTTP + OTLP/gRPC (h2c and TLS) against a real otel-collector.
       - name: Integration tests (otel-collector)
         run: make integration-otel
-        env:
-          OTELCOL_BIN: /tmp/otelcol-contrib
 
       # OTLP/HTTP + OTLP/gRPC against a real Vector `opentelemetry` source.
       - name: Integration tests (Vector)
         run: make integration-vector
-        env:
-          VECTOR_BIN: /tmp/vector-x86_64-unknown-linux-gnu/bin/vector
