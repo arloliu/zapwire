@@ -146,6 +146,9 @@ func (e *msgpackEncoder) AppendTime(v time.Time) {
 // count it on the parent now (the only count site for a nested container).
 func (e *msgpackEncoder) AppendObject(obj zapcore.ObjectMarshaler) error {
 	d := len(e.stack)
+	if d >= maxEncodeDepth {
+		return errMaxEncodeDepth // before any mutation: stack stays balanced
+	}
 	if e.stack[d-1].kind == kindArray {
 		e.stack[d-1].count++
 	}
@@ -163,6 +166,9 @@ func (e *msgpackEncoder) AppendObject(obj zapcore.ObjectMarshaler) error {
 // marshaler the stack is back to d+1; sealDownTo(d+1) is a defensive no-op.)
 func (e *msgpackEncoder) AppendArray(arr zapcore.ArrayMarshaler) error {
 	d := len(e.stack)
+	if d >= maxEncodeDepth {
+		return errMaxEncodeDepth // before any mutation: stack stays balanced
+	}
 	if e.stack[d-1].kind == kindArray {
 		e.stack[d-1].count++
 	}

@@ -30,6 +30,12 @@ const (
 	defaultBufferSize        = 4096
 	defaultFlushInterval     = 200 * time.Millisecond
 	defaultBatchSize         = 128
+
+	// maxBufferSize is a sanity ceiling on the async queue capacity. It stops a
+	// fat-fingered WithBufferSize (e.g. 1<<40) from OOM-panicking the
+	// make(chan []byte, n) at construction, while sitting far above any real
+	// configuration. Extends the "clamp, don't error" contract to the high side.
+	maxBufferSize = 1 << 24 // 16,777,216 entries
 )
 
 type config struct {
@@ -183,6 +189,8 @@ func normalizeConfig(c config) config {
 	}
 	if c.bufferSize <= 0 {
 		c.bufferSize = defaultBufferSize
+	} else if c.bufferSize > maxBufferSize {
+		c.bufferSize = maxBufferSize
 	}
 	if c.flushInterval <= 0 {
 		c.flushInterval = defaultFlushInterval

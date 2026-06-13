@@ -4,6 +4,7 @@ package fluent
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -12,6 +13,18 @@ import (
 	"go.uber.org/zap/buffer"
 	"go.uber.org/zap/zapcore"
 )
+
+// maxEncodeDepth caps container nesting (objects/arrays). A zapcore marshaler
+// that recurses unboundedly (self-referential or attacker-shaped) would grow the
+// goroutine stack to exhaustion — an UNCATCHABLE fatal throw on the logging path.
+// The limit is far above any real log (legitimate nesting is single digits); it
+// guards only runaway recursion. A flat OpenNamespace chain grows the heap, not
+// the stack, so it is intentionally not bounded here.
+const maxEncodeDepth = 1000
+
+// errMaxEncodeDepth is returned by AppendObject/AppendArray at the depth cap. It
+// surfaces through zap's <key>Error convention; the entry still ships.
+var errMaxEncodeDepth = errors.New("fluent: max container nesting depth exceeded")
 
 // Compile-time proof the full method set is implemented (cross-checked against
 // go.uber.org/zap/zapcore/encoder.go in the module cache).
