@@ -10,10 +10,11 @@ and both modules adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## Unreleased
 
-### v1.0.1 (root) — security hardening
+## v1.0.1 — 2026-06-13
 
-No API changes. From a codebase security audit (defensive log-shipping threat
-model: app-provided content, hostile receiver responses, configuration):
+Security hardening, no API changes. From a codebase security audit (defensive
+log-shipping threat model: app-provided content, hostile receiver responses,
+configuration):
 
 - **fluent:** reject a batch whose total size would exceed the msgpack `bin32`
   length header (> 4 GiB) instead of emitting a truncated header that desyncs the
@@ -26,7 +27,7 @@ model: app-provided content, hostile receiver responses, configuration):
   fat-fingered value cannot OOM-panic the queue allocation at construction
   (extends the existing "clamp, don't error" contract to the high side).
 
-### otlp/v0.5.0
+## otlp/v0.5.0 — 2026-06-13
 
 - **Added:** `WithDrainTimeout(d)` — bounds the total time `Sync`/`Close` spend
   draining the queue before dropping the remainder (counted), capping the
