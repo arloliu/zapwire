@@ -112,6 +112,86 @@ sinks:
 	}, 15*time.Second, 200*time.Millisecond, "record with trace IDs and service name must reach Vector")
 }
 
+// TestVectorEndToEndGRPC is the OTLP/gRPC variant of TestVectorEndToEnd
+// (design 2026-06-12 §9.4 follow-up): same Vector topology, but the record
+// ships through NewGRPCCore to the source's gRPC address (h2c via
+// WithInsecure). Assertions are identical — Vector normalizes both protocols
+// into the same event shape, so a matching event proves the gRPC framing,
+// method path, and trace-context bytes interoperate with a real non-Go
+// OTLP/gRPC receiver.
+func TestVectorEndToEndGRPC(t *testing.T) {
+	bin := os.Getenv("VECTOR_BIN")
+	if bin == "" {
+		if p, err := exec.LookPath("vector"); err == nil {
+			bin = p
+		} else {
+			bin = "/usr/local/bin/vector"
+		}
+	}
+	if _, err := os.Stat(bin); err != nil {
+		t.Skipf("vector binary not found at %s (set VECTOR_BIN)", bin)
+	}
+
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, "data")
+	require.NoError(t, os.MkdirAll(dataDir, 0o755))
+	outFile := filepath.Join(dir, "out.json")
+	grpcPort := freePortVec(t)
+	httpPort := freePortVec(t)
+
+	cfg := fmt.Sprintf(`data_dir: %s
+sources:
+  otlp:
+    type: opentelemetry
+    grpc:
+      address: 127.0.0.1:%d
+    http:
+      address: 127.0.0.1:%d
+sinks:
+  out:
+    type: file
+    inputs:
+      - otlp.logs
+    path: %s
+    encoding:
+      codec: json
+`, dataDir, grpcPort, httpPort, outFile)
+	cfgFile := filepath.Join(dir, "vector.yaml")
+	require.NoError(t, os.WriteFile(cfgFile, []byte(cfg), 0o644))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "--config", cfgFile)
+	require.NoError(t, cmd.Start())
+	defer func() { cancel(); _ = cmd.Wait() }()
+	waitPortVec(t, grpcPort)
+
+	core, w, err := NewGRPCCore(fmt.Sprintf("127.0.0.1:%d", grpcPort), zapcore.InfoLevel,
+		WithInsecure(),
+		WithServiceName("vtest-grpc"), WithFlushInterval(50*time.Millisecond))
+	require.NoError(t, err)
+	logger := zap.New(core)
+	sc, sctx := testSpanContext(t)
+	logger.Info("grpc-integration", zap.String("k", "v"), SpanContext(sctx))
+	require.NoError(t, w.Sync())
+	require.NoError(t, w.Close())
+
+	// Poll the file sink output for our record with intact trace IDs and the
+	// service name flowing through as a resource attribute.
+	require.Eventually(t, func() bool {
+		data, err := os.ReadFile(outFile)
+		if err != nil {
+			return false
+		}
+		s := strings.ToLower(string(data))
+
+		return strings.Contains(s, "grpc-integration") &&
+			strings.Contains(s, strings.ToLower(sc.TraceID().String())) &&
+			strings.Contains(s, strings.ToLower(sc.SpanID().String())) &&
+			strings.Contains(s, "vtest-grpc")
+	}, 15*time.Second, 200*time.Millisecond, "record with trace IDs and service name must reach Vector over gRPC")
+}
+
 func freePortVec(t *testing.T) int {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")

@@ -4,11 +4,15 @@
 version: "2"
 
 run:
-  # Lint the opt-in integration test (fluent/fluentbit_integration_test.go) too,
-  # so it can never rot behind its build tag. The tag only affects what golangci
-  # compiles; `go test`/`go vet` still exclude it unless run with -tags fluentbit.
+  # Lint the opt-in integration tests (fluent + otlp fluentbit/vector/otelcollector
+  # files) too, so they can never rot behind their build tags. The tags only affect
+  # what golangci compiles; `go test`/`go vet` still exclude them unless run with
+  # the matching -tags. All three otlp files compile together — their helpers are
+  # suffix-namespaced (freePortFB / freePortVec / freePort) for exactly this reason.
   build-tags:
     - fluentbit
+    - vector
+    - otelcollector
 
 linters:
   enable:

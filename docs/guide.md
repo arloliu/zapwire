@@ -349,7 +349,10 @@ values: a `Retryable` error has already exhausted its retry budget.
 
 The package is tested end-to-end against the OTel Collector (`make integration-otel`),
 Vector's opentelemetry source (`make integration-vector`), and Fluent Bit's
-`opentelemetry` input (`make integration-fluentbit`). The endpoint URL is
+`opentelemetry` input (`make integration-fluentbit`) — each over both OTLP/HTTP and
+OTLP/gRPC (the collector suite additionally covers gRPC over TLS, and the Fluent Bit
+suite covers gRPC relay fidelity through FB's `opentelemetry` output). The collector and
+Vector suites run in CI against pinned receiver versions. The endpoint URL is
 validated at construction time; `/v1/logs` is appended only when the path is empty or `"/"` (bare slash).
 
 `EndpointFromEnv()` reads `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` first, then
