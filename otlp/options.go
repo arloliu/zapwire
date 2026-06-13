@@ -83,6 +83,21 @@ const (
 	Gzip
 )
 
+// Encoding selects the OTLP/HTTP payload encoding (design 2026-06-13).
+type Encoding uint8
+
+const (
+	// Protobuf is the default: binary protobuf, Content-Type
+	// application/x-protobuf (the v0.1.0 behavior).
+	Protobuf Encoding = iota
+	// JSON selects the spec's "JSON Protobuf Encoding": Content-Type
+	// application/json, lowerCamelCase field names, hex trace/span IDs,
+	// integer enums, 64-bit integers as decimal strings. HTTP only —
+	// combining it with NewGRPCWriter/NewGRPCCore is a construction error
+	// (OTLP/gRPC is protobuf by definition).
+	JSON
+)
+
 // RetryConfig bounds the §5.3 retry loop. Zero fields fall back to defaults.
 type RetryConfig struct {
 	Initial     time.Duration // first backoff delay (default 5s)
@@ -148,6 +163,7 @@ type options struct {
 	headers         map[string]string
 	client          *http.Client
 	compression     Compression
+	encoding        Encoding
 	insecure        bool
 	tlsConfig       *tls.Config
 	errFn           func(error)
@@ -319,6 +335,11 @@ func WithBatchSize(n int) Option { return func(o *options) { o.batchSize = n } }
 
 // WithMaxRequestBytes caps the uncompressed request body (default 4 MiB);
 // batches are cut early and oversized single records are dropped at Write.
+//
+// In WithEncoding(JSON) mode the cap governs the PROTOBUF-EQUIVALENT request
+// size (batch cutting happens before the JSON transcode): the JSON wire body
+// is typically 1.5–3× larger. Callers targeting a receiver's body limit must
+// lower the cap accordingly — e.g. a 4 MiB receiver limit → cap at ~1.3 MiB.
 func WithMaxRequestBytes(n int) Option { return func(o *options) { o.maxRequestBytes = n } }
 
 // WithFlushInterval caps batch latency (default 1s).
@@ -357,6 +378,16 @@ func WithHTTPClient(c *http.Client) Option {
 
 // WithCompression selects request compression (default NoCompression).
 func WithCompression(c Compression) Option { return func(o *options) { o.compression = c } }
+
+// WithEncoding selects the OTLP/HTTP payload encoding (default Protobuf).
+// JSON transcodes each batch to the spec's JSON Protobuf Encoding at ship
+// time — the protobuf encode path (and its performance) is untouched, so
+// JSON mode pays one extra pass + allocation per batch. Note that
+// WithMaxRequestBytes continues to govern the protobuf-equivalent request
+// size: the JSON body is typically 1.5–3× larger on the wire. Composes
+// with WithCompression(Gzip). Construction error on the gRPC constructors
+// and for undefined Encoding values.
+func WithEncoding(e Encoding) Option { return func(o *options) { o.encoding = e } }
 
 // WithInsecure selects plaintext h2c for SCHEME-LESS gRPC endpoints
 // ("host:4317"). An explicit http/https scheme always takes precedence (OTel
@@ -427,6 +458,7 @@ type Protocol string
 const (
 	ProtocolGRPC         Protocol = "grpc"
 	ProtocolHTTPProtobuf Protocol = "http/protobuf"
+	ProtocolHTTPJSON     Protocol = "http/json"
 )
 
 // ProtocolFromEnv resolves OTEL_EXPORTER_OTLP_LOGS_PROTOCOL then
@@ -437,7 +469,9 @@ const (
 //	switch otlp.ProtocolFromEnv() {
 //	case otlp.ProtocolGRPC:
 //	    w, err = otlp.NewGRPCWriter(otlp.EndpointFromEnv())
-//	default: // "", http/protobuf, http/json (json is not implemented here)
+//	case otlp.ProtocolHTTPJSON:
+//	    w, err = otlp.NewHTTPWriter(otlp.EndpointFromEnv(), otlp.WithEncoding(otlp.JSON))
+//	default: // "", http/protobuf
 //	    w, err = otlp.NewHTTPWriter(otlp.EndpointFromEnv())
 //	}
 func ProtocolFromEnv() Protocol {
