@@ -374,7 +374,7 @@ func TestPrepareFailDropsBatchWithoutAttempt(t *testing.T) {
 				WithErrorHandler(func(error) { events.Add(1) }),
 			}))
 			rec := encodeRecord(t, NewEncoder(), testEntry())
-			w.export([][]byte{rec, rec, rec}, allowRetry)
+			w.export([][]byte{rec, rec, rec}, allowRetry, time.Time{})
 
 			require.Equal(t, uint64(3), w.DroppedLogs())
 			require.Equal(t, int64(1), events.Load())
@@ -421,7 +421,7 @@ func TestJSONRetryTranscodesOnce(t *testing.T) {
 		WithRetry(RetryConfig{Initial: time.Millisecond, MaxInterval: 2 * time.Millisecond, MaxElapsed: time.Second}),
 	}))
 	rec := encodeRecord(t, NewEncoder(), testEntry())
-	w.export([][]byte{rec}, true)
+	w.export([][]byte{rec}, true, time.Time{})
 
 	require.Equal(t, int64(2), calls.Load(), "503 then 200")
 	require.Equal(t, int64(1), ct.prepares.Load(), "transcode/gzip must run once per batch")

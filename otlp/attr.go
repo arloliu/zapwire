@@ -2,6 +2,7 @@ package otlp
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"strconv"
 	"sync"
@@ -10,6 +11,19 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap/zapcore"
 )
+
+// maxEncodeDepth caps container nesting (objects/arrays). A zapcore marshaler
+// that recurses unboundedly (self-referential or attacker-shaped) would grow the
+// goroutine stack to exhaustion — an UNCATCHABLE fatal throw on the logging path.
+// The limit is far above any real log (legitimate nesting is single digits); it
+// guards only runaway recursion. Because the JSON transcoder consumes only the
+// proto this encoder produces, capping here transitively bounds it too. A flat
+// OpenNamespace chain grows the heap, not the stack, and is not bounded here.
+const maxEncodeDepth = 1000
+
+// errMaxEncodeDepth is returned by the container Add*/Append* methods at the
+// depth cap. It surfaces through zap's <key>Error convention; the entry still ships.
+var errMaxEncodeDepth = errors.New("otlp: max container nesting depth exceeded")
 
 type frameKind uint8
 
@@ -258,6 +272,9 @@ func (s *encState) AddTime(k string, v time.Time)         { s.AddInt64(k, v.Unix
 func (s *encState) OpenNamespace(k string) { s.openFrame(frameKVList, k) }
 
 func (s *encState) AddObject(k string, m zapcore.ObjectMarshaler) error {
+	if len(s.stack) >= maxEncodeDepth {
+		return errMaxEncodeDepth // before snap/openFrame: state stays balanced
+	}
 	sn := s.snap()
 	s.openFrame(frameKVList, k)
 
@@ -273,6 +290,9 @@ func (s *encState) AddObject(k string, m zapcore.ObjectMarshaler) error {
 }
 
 func (s *encState) AddArray(k string, m zapcore.ArrayMarshaler) error {
+	if len(s.stack) >= maxEncodeDepth {
+		return errMaxEncodeDepth // before snap/openFrame: state stays balanced
+	}
 	sn := s.snap()
 	s.openFrame(frameArray, k)
 
@@ -375,6 +395,9 @@ func (a arrayEnc) AppendDuration(v time.Duration) { a.AppendInt64(v.Nanoseconds(
 func (a arrayEnc) AppendTime(v time.Time)         { a.AppendInt64(v.UnixNano()) }
 
 func (a arrayEnc) AppendArray(m zapcore.ArrayMarshaler) error {
+	if len(a.s.stack) >= maxEncodeDepth {
+		return errMaxEncodeDepth // before snap/openFrame: state stays balanced
+	}
 	sn := a.s.snap()
 	a.s.openFrame(frameArray, "")
 
@@ -390,6 +413,9 @@ func (a arrayEnc) AppendArray(m zapcore.ArrayMarshaler) error {
 }
 
 func (a arrayEnc) AppendObject(m zapcore.ObjectMarshaler) error {
+	if len(a.s.stack) >= maxEncodeDepth {
+		return errMaxEncodeDepth // before snap/openFrame: state stays balanced
+	}
 	sn := a.s.snap()
 	a.s.openFrame(frameKVList, "")
 

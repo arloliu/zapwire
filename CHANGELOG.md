@@ -10,6 +10,35 @@ and both modules adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## Unreleased
 
+### v1.0.1 (root) — security hardening
+
+No API changes. From a codebase security audit (defensive log-shipping threat
+model: app-provided content, hostile receiver responses, configuration):
+
+- **fluent:** reject a batch whose total size would exceed the msgpack `bin32`
+  length header (> 4 GiB) instead of emitting a truncated header that desyncs the
+  receiver's parser. (Pathological reachability; closes a wire-integrity gap.)
+- **fluent:** cap container nesting depth so a pathological/attacker-shaped
+  object/array marshaler cannot recurse the goroutine stack to exhaustion (an
+  uncatchable fatal throw on the logging path); over-deep fields degrade to
+  `<key>Error` and the entry still ships.
+- **core:** clamp `WithBufferSize` to a high-side ceiling (1<<24) so a
+  fat-fingered value cannot OOM-panic the queue allocation at construction
+  (extends the existing "clamp, don't error" contract to the high side).
+
+### otlp/v0.5.0
+
+- **Added:** `WithDrainTimeout(d)` — bounds the total time `Sync`/`Close` spend
+  draining the queue before dropping the remainder (counted), capping the
+  worst-case shutdown latency a stalled or repeatedly-failing receiver can
+  impose. Default 0 keeps the unbounded barrier (no behavior change).
+- **Security (no API change):** cap container nesting depth in the OTLP encoder
+  (same uncatchable-recursion fix as the root encoders; the JSON transcoder is
+  bounded transitively); clamp `WithQueueSize` / `WithMaxRequestBytes` to
+  high-side ceilings; pin the gRPC TLS `MinVersion` to 1.2 explicitly rather than
+  relying on the stdlib default; set the transport-owned `Content-Type` /
+  `Content-Encoding` last so `WithHeaders` cannot override them.
+
 ## otlp/v0.4.0 — 2026-06-13
 
 - **BREAKING:** removed `NewWriter` and `NewCore`. Use the protocol-explicit

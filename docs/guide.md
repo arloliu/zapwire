@@ -478,6 +478,14 @@ not confirmed delivered (queue overflow, retry exhaustion, partial-success
 rejections, cancelled batches). `WithErrorHandler` receives terminal `*ExportError`
 values: a `Retryable` error has already exhausted its retry budget.
 
+By default `Sync()` is a barrier, not a deadline: against a stalled or
+repeatedly-failing receiver it can block for up to `pending_batches × (retry
+budget + attempt timeout)`. `WithDrainTimeout(d)` caps the **total** time
+`Sync`/`Close` will spend draining and drops the remainder (counted) once the
+budget is spent — a soft bound (an attempt already in flight still runs to its
+`WithTimeout`). A healthy receiver drains well within the bound, so it only ever
+trims a hostile receiver's tail; the default (0) keeps the unbounded barrier.
+
 ### Receivers and endpoint resolution
 
 The package is tested end-to-end against the OTel Collector (`make integration-otel`),

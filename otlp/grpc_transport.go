@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -141,7 +142,15 @@ func newGRPCTransport(endpoint string, o options) (*grpcTransport, error) {
 	if useTLS {
 		// ALPN h2 only — no HTTP/1 fallback on this dedicated transport.
 		protos.SetHTTP2(true)
-		htr.TLSClientConfig = o.tlsConfig
+		tc := o.tlsConfig
+		if tc == nil {
+			// Pin a TLS 1.2 floor explicitly rather than leaning on the stdlib
+			// default (1.2 today, but unpinned). A caller-supplied config is
+			// honored verbatim. NextProtos is left to the http.Transport, which
+			// negotiates h2 from the Protocols field above.
+			tc = &tls.Config{MinVersion: tls.VersionTLS12}
+		}
+		htr.TLSClientConfig = tc
 		htr.ForceAttemptHTTP2 = true
 	} else {
 		// h2c (prior knowledge). HTTP/1 must stay DISABLED: with both

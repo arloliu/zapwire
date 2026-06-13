@@ -85,6 +85,12 @@ func (t *httpTransport) attempt(p prepared) (*acceptance, *ExportError) {
 	if err != nil {
 		return nil, &ExportError{Err: err}
 	}
+	// User headers first, then transport-owned headers LAST so WithHeaders can
+	// never override the Content-Type/Content-Encoding the body is framed with
+	// (a mismatched Content-Type would make the receiver misparse the payload).
+	for k, v := range t.headers {
+		req.Header.Set(k, v)
+	}
 	ct := "application/x-protobuf"
 	if t.jsonOn {
 		ct = "application/json"
@@ -92,9 +98,6 @@ func (t *httpTransport) attempt(p prepared) (*acceptance, *ExportError) {
 	req.Header.Set("Content-Type", ct)
 	if p.compressed {
 		req.Header.Set("Content-Encoding", "gzip")
-	}
-	for k, v := range t.headers {
-		req.Header.Set(k, v)
 	}
 	resp, err := t.client.Do(req)
 	if err != nil {

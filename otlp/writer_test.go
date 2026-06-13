@@ -49,7 +49,7 @@ func TestExportSuccess(t *testing.T) {
 	defer srv.Close()
 
 	w, errs := newTestWriter(t, srv.URL)
-	w.export([][]byte{{0x10, 0x09}}, true)
+	w.export([][]byte{{0x10, 0x09}}, true, time.Time{})
 	require.Empty(t, *errs)
 	require.Zero(t, w.DroppedLogs())
 	require.Equal(t, "application/x-protobuf", gotCT)
@@ -69,7 +69,7 @@ func TestExportRetriesThenSucceeds(t *testing.T) {
 	defer srv.Close()
 
 	w, _ := newTestWriter(t, srv.URL)
-	w.export([][]byte{{0x10, 0x09}}, true)
+	w.export([][]byte{{0x10, 0x09}}, true, time.Time{})
 	require.Equal(t, int32(3), hits.Load())
 	require.Zero(t, w.DroppedLogs())
 }
@@ -85,7 +85,7 @@ func TestExport4xxNeverRetried(t *testing.T) {
 			defer srv.Close()
 
 			w, errs := newTestWriter(t, srv.URL)
-			w.export([][]byte{{0x10, 0x09}, {0x10, 0x05}}, true)
+			w.export([][]byte{{0x10, 0x09}, {0x10, 0x05}}, true, time.Time{})
 			require.Equal(t, int32(1), hits.Load())
 			require.Equal(t, uint64(2), w.DroppedLogs()) // whole batch counted
 			require.Len(t, *errs, 1)
@@ -105,7 +105,7 @@ func TestExportRetryBudgetExhausted(t *testing.T) {
 
 	w, errs := newTestWriter(t, srv.URL)
 	start := time.Now()
-	w.export([][]byte{{0x10, 0x09}}, true)
+	w.export([][]byte{{0x10, 0x09}}, true, time.Time{})
 	require.Less(t, time.Since(start), time.Second)
 	require.Equal(t, uint64(1), w.DroppedLogs())
 	require.NotEmpty(t, *errs)
@@ -122,7 +122,7 @@ func TestExportRetryAfterBeyondBudgetGivesUp(t *testing.T) {
 
 	w, _ := newTestWriter(t, srv.URL)
 	start := time.Now()
-	w.export([][]byte{{0x10, 0x09}}, true)
+	w.export([][]byte{{0x10, 0x09}}, true, time.Time{})
 	require.Equal(t, int32(1), hits.Load(), "must give up immediately")
 	require.Less(t, time.Since(start), time.Second)
 	require.Equal(t, uint64(1), w.DroppedLogs())
@@ -137,7 +137,7 @@ func TestExportNoRetryWhenDisallowed(t *testing.T) {
 	defer srv.Close()
 
 	w, _ := newTestWriter(t, srv.URL)
-	w.export([][]byte{{0x10, 0x09}}, false) // Close-drain mode (§5.4)
+	w.export([][]byte{{0x10, 0x09}}, false, time.Time{}) // Close-drain mode (§5.4)
 	require.Equal(t, int32(1), hits.Load())
 	require.Equal(t, uint64(1), w.DroppedLogs())
 }
@@ -155,7 +155,7 @@ func TestExportCancelledDuringBackoff(t *testing.T) {
 		w.cancel()
 	}()
 	start := time.Now()
-	w.export([][]byte{{0x10, 0x09}}, true)
+	w.export([][]byte{{0x10, 0x09}}, true, time.Time{})
 	require.Less(t, time.Since(start), 5*time.Second, "Close must abort the backoff sleep")
 	require.Equal(t, uint64(1), w.DroppedLogs()) // counted exactly once (§5.4)
 }
@@ -186,7 +186,7 @@ func TestPartialSuccessHandling(t *testing.T) {
 			defer srv.Close()
 
 			w, errs := newTestWriter(t, srv.URL)
-			w.export([][]byte{{0x10, 0x09}, {0x10, 0x05}, {0x10, 0x0d}}, true)
+			w.export([][]byte{{0x10, 0x09}, {0x10, 0x05}, {0x10, 0x0d}}, true, time.Time{})
 			require.Equal(t, int32(1), hits.Load(), "partial success must NOT retry")
 			require.Equal(t, tc.dropped, w.DroppedLogs())
 			if tc.dropped > 0 || tc.warning {
@@ -216,7 +216,7 @@ func TestGzipAndHeaders(t *testing.T) {
 	defer srv.Close()
 
 	w, _ := newTestWriter(t, srv.URL, WithCompression(Gzip), WithHeaders(map[string]string{"x-api-key": "k"}))
-	w.export([][]byte{{0x10, 0x09}}, true)
+	w.export([][]byte{{0x10, 0x09}}, true, time.Time{})
 	require.Equal(t, "gzip", gotEnc)
 	require.Equal(t, "k", gotKey)
 	require.Equal(t, w.env.sizeFor(w.env.recordCost(2)), len(plain))

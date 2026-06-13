@@ -20,6 +20,7 @@ type Writer struct {
 	maxBytes   int
 	batchSize  int
 	flushEvery time.Duration
+	drainEvery time.Duration // WithDrainTimeout; 0 = unbounded Sync/Close drain
 	dropPolicy DropPolicy
 	errFn      func(error)
 	env        *envelope
@@ -52,6 +53,7 @@ func newWriterCore(tr transport, o options) *Writer {
 		maxBytes:   o.maxRequestBytes,
 		batchSize:  o.batchSize,
 		flushEvery: o.flushInterval,
+		drainEvery: o.drainTimeout,
 		dropPolicy: o.dropPolicy,
 		errFn:      o.errFn,
 		env:        newEnvelope(o),
@@ -77,10 +79,20 @@ func (w *Writer) drop(n int, err *ExportError) {
 }
 
 // export ships one batch with OTLP retry semantics (§5.3). allowRetry=false
-// is the Close-drain single-attempt mode (§5.4). Counts the whole batch as
-// dropped on failure.
-func (w *Writer) export(records [][]byte, allowRetry bool) {
+// is the Close-drain single-attempt mode (§5.4). drainDeadline, when non-zero,
+// caps the retry/backoff budget to a shared Sync/Close drain deadline
+// (WithDrainTimeout); a zero value leaves the per-batch budget unbounded.
+// Counts the whole batch as dropped on failure.
+func (w *Writer) export(records [][]byte, allowRetry bool, drainDeadline time.Time) {
 	if len(records) == 0 {
+		return
+	}
+	// Drain budget already spent (Sync/Close under WithDrainTimeout): drop the
+	// remaining batches without another attempt rather than letting each one
+	// burn an attempt timeout. Zero deadline = unbounded, so this never fires.
+	if !drainDeadline.IsZero() && !time.Now().Before(drainDeadline) {
+		w.drop(len(records), &ExportError{Message: "drain timeout exceeded"})
+
 		return
 	}
 	raw := w.env.assemble(getFrameBuf(), records)
@@ -99,6 +111,9 @@ func (w *Writer) export(records [][]byte, allowRetry bool) {
 	}
 
 	deadline := time.Now().Add(w.retry.MaxElapsed)
+	if !drainDeadline.IsZero() && drainDeadline.Before(deadline) {
+		deadline = drainDeadline // shared drain budget caps this batch's retry/backoff
+	}
 	delay := w.retry.Initial
 	for {
 		accept, expErr := w.tr.attempt(p)
@@ -247,58 +262,67 @@ func (w *Writer) run() {
 	var batch [][]byte
 	var tagged int
 
-	flush := func(allowRetry bool) {
+	flush := func(allowRetry bool, drainDeadline time.Time) {
 		if len(batch) > 0 {
-			w.export(batch, allowRetry)
+			w.export(batch, allowRetry, drainDeadline)
 			batch, tagged = batch[:0], 0
 		}
 	}
-	add := func(rec []byte, allowRetry bool) {
+	add := func(rec []byte, allowRetry bool, drainDeadline time.Time) {
 		cost := w.env.recordCost(len(rec))
 		// Byte-aware cut BEFORE adding (§5.2): never assemble past maxBytes.
 		if len(batch) > 0 && w.env.sizeFor(tagged+cost) > w.maxBytes {
-			flush(allowRetry)
+			flush(allowRetry, drainDeadline)
 		}
 		batch = append(batch, rec)
 		tagged += cost
 		if len(batch) >= w.batchSize || w.env.sizeFor(tagged) >= w.maxBytes {
-			flush(allowRetry)
+			flush(allowRetry, drainDeadline)
 		}
 	}
-	drainQueued := func(allowRetry bool) {
+	drainQueued := func(allowRetry bool, drainDeadline time.Time) {
 		for {
 			select {
 			case rec := <-w.queue:
-				add(rec, allowRetry)
+				add(rec, allowRetry, drainDeadline)
 			default:
-				flush(allowRetry)
+				flush(allowRetry, drainDeadline)
 
 				return
 			}
 		}
 	}
+	// drainBudget caps a whole Sync/Close drain to WithDrainTimeout (0 = unbounded).
+	drainBudget := func() time.Time {
+		if w.drainEvery > 0 {
+			return time.Now().Add(w.drainEvery)
+		}
+
+		return time.Time{}
+	}
 
 	for {
 		select {
 		case <-w.ctx.Done():
-			drainQueued(false) // final drain: one attempt per batch (§5.4)
+			drainQueued(false, drainBudget()) // final drain: one attempt per batch (§5.4)
 
 			return
 		case ack := <-w.flushReq:
-			drainQueued(true) // Sync barrier: everything enqueued before the call
+			drainQueued(true, drainBudget()) // Sync barrier: everything enqueued before the call
 			close(ack)
 		case <-ticker.C:
-			flush(true)
+			flush(true, time.Time{}) // periodic flush: no overall drain bound
 		case rec := <-w.queue:
-			add(rec, true)
+			add(rec, true, time.Time{})
 		}
 	}
 }
 
 // Sync flushes every record enqueued before the call and waits for
 // resolution (exported or dropped). Worst case is pending_batches ×
-// (retry budget + attempt timeout) — a barrier, not a hard deadline (§5.4).
-// Post-Close, Sync is a nil no-op.
+// (retry budget + attempt timeout) — a barrier, not a hard deadline (§5.4) —
+// unless WithDrainTimeout is set, which caps the whole drain and drops the
+// remainder once the budget is spent. Post-Close, Sync is a nil no-op.
 func (w *Writer) Sync() error {
 	if w.closed.Load() {
 		return nil

@@ -76,7 +76,7 @@ func main() {
 	logger.Info("console only — below the OTel gate", zap.String("phase", "start"))
 
 	// Warn and Error: pass both cores.
-	logger.Warn("disk space low", zap.Int("pct", 92))  // both sinks
+	logger.Warn("disk space low", zap.Int("pct", 92))                    // both sinks
 	logger.Error("write failed", zap.String("path", "/var/data/app.db")) // both sinks
 
 	fmt.Println("\n--- runtime dial: open gate to InfoLevel ---")

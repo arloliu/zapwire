@@ -253,6 +253,7 @@ Core options (for `ndjson` and `zapwire.New`, pass directly; for `fluent`, wrap 
 | `WithBatchSize(n)` | `512` | Records per export request |
 | `WithFlushInterval(d)` | `1s` | Max batch latency |
 | `WithTimeout(d)` | `10s` | Per-export-attempt deadline |
+| `WithDrainTimeout(d)` | `0` (unbounded) | Caps total `Sync`/`Close` drain time; drops the remainder |
 | `WithRetry(rc)` | 5s / 30s / 60s | Retry initial / max interval / budget |
 | `WithHeaders(h)` | — | Auth headers added to every request |
 | `WithInsecure()` | — | gRPC h2c for bare `host:port` endpoints |

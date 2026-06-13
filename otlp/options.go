@@ -138,8 +138,18 @@ func (e *ExportError) Error() string {
 
 func (e *ExportError) Unwrap() error { return e.Err }
 
-// ErrNoEndpoint is returned by NewWriter/NewCore for an empty endpoint.
+// ErrNoEndpoint is returned by the constructors for an empty endpoint.
 var ErrNoEndpoint = errors.New("otlp: no endpoint")
+
+const (
+	// maxQueueSize and maxRequestBytesCeil are sanity ceilings on the queue and
+	// per-request buffer. They stop a fat-fingered WithQueueSize /
+	// WithMaxRequestBytes (e.g. 1<<40) from OOM-panicking the make(chan) / batch
+	// buffer at construction, while sitting far above any real configuration.
+	// They extend the "clamp, don't error" contract to the high side.
+	maxQueueSize        = 1 << 24   // 16,777,216 records
+	maxRequestBytesCeil = 256 << 20 // 256 MiB
+)
 
 type options struct {
 	// envelope end
@@ -158,6 +168,7 @@ type options struct {
 	maxRequestBytes int
 	flushInterval   time.Duration
 	timeout         time.Duration
+	drainTimeout    time.Duration
 	dropPolicy      DropPolicy
 	retry           RetryConfig
 	headers         map[string]string
@@ -209,12 +220,19 @@ func normalize(o options) options {
 	d := defaultOptions()
 	if o.queueSize <= 0 {
 		o.queueSize = d.queueSize
+	} else if o.queueSize > maxQueueSize {
+		o.queueSize = maxQueueSize
 	}
 	if o.batchSize <= 0 {
 		o.batchSize = d.batchSize
 	}
 	if o.maxRequestBytes <= 0 {
 		o.maxRequestBytes = d.maxRequestBytes
+	} else if o.maxRequestBytes > maxRequestBytesCeil {
+		o.maxRequestBytes = maxRequestBytesCeil
+	}
+	if o.drainTimeout < 0 {
+		o.drainTimeout = 0 // negative disables the bound, like an unset value
 	}
 	if o.flushInterval <= 0 {
 		o.flushInterval = d.flushInterval
@@ -351,6 +369,19 @@ func WithDropPolicy(p DropPolicy) Option { return func(o *options) { o.dropPolic
 // WithTimeout bounds each export attempt (default 10s); on the gRPC path it
 // is also sent as the grpc-timeout request header.
 func WithTimeout(d time.Duration) Option { return func(o *options) { o.timeout = d } }
+
+// WithDrainTimeout bounds the TOTAL time Sync and Close spend draining the queue
+// before giving up and dropping the remainder (counted in DroppedLogs). It caps
+// the otherwise pending_batches × retry-budget worst case that a stalled or
+// repeatedly-failing receiver can impose on a shutdown/flush path. The default
+// (0, or any non-positive value) keeps the legacy unbounded barrier: Sync waits
+// for every record to be exported or dropped, however long that takes.
+//
+// This is a SOFT bound: an export attempt already in flight still runs to its
+// WithTimeout, so the effective ceiling is drainTimeout plus at most one
+// in-flight attempt. A working receiver is unaffected — the drain completes long
+// before the bound — so it only ever trims a hostile/broken receiver's tail.
+func WithDrainTimeout(d time.Duration) Option { return func(o *options) { o.drainTimeout = d } }
 
 // WithRetry overrides retry/backoff bounds; zero fields keep defaults.
 func WithRetry(rc RetryConfig) Option { return func(o *options) { o.retry = rc } }
