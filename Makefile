@@ -8,8 +8,13 @@ LINTER_GOMOD          := -modfile=.golangci-lint.go.mod
 GOLANGCI_LINT_VERSION := 2.11.4
 MODULES               := . ./otlp ./otlp/internal/conformance
 
+# Latest git tag per module. Root tags are plain vX.Y.Z; otlp tags are otlp/vX.Y.Z.
+ROOT_LATEST_TAG := $(shell git tag --list 'v[0-9]*' --sort=-version:refname 2>/dev/null | head -1)
+OTLP_LATEST_TAG := $(shell git tag --list 'otlp/v[0-9]*' --sort=-version:refname 2>/dev/null | head -1)
+OTLP_LATEST_VER := $(patsubst otlp/%,%,$(OTLP_LATEST_TAG))
+
 .DEFAULT_GOAL := help
-.PHONY: help workspace test test-race integration integration-otel integration-vector integration-fluentbit bench coverage lint linter-update linter-version clean-linter-cache fmt vet gomod-tidy generate examples ci
+.PHONY: help workspace test test-race integration integration-otel integration-vector integration-fluentbit bench coverage lint linter-update linter-version clean-linter-cache fmt vet gomod-tidy generate examples update-pkg-cache ci
 
 ## help: Show this help message
 help:
@@ -99,6 +104,17 @@ clean-linter-cache:
 gomod-tidy:
 	@go mod tidy
 	@go mod verify
+
+## update-pkg-cache: Warm the proxy.golang.org / pkg.go.dev cache for the latest tagged release of each module
+update-pkg-cache:
+	@if [ -z "$(ROOT_LATEST_TAG)" ]; then echo "error: no root module tag found (tag with vX.Y.Z first)"; exit 1; fi
+	@if [ -z "$(OTLP_LATEST_TAG)" ]; then echo "error: no otlp module tag found (tag with otlp/vX.Y.Z first)"; exit 1; fi
+	@echo "  → github.com/arloliu/zapwire@$(ROOT_LATEST_TAG)"
+	@curl -sSf "https://proxy.golang.org/github.com/arloliu/zapwire/@v/$(ROOT_LATEST_TAG).info"
+	@echo
+	@echo "  → github.com/arloliu/zapwire/otlp@$(OTLP_LATEST_VER)"
+	@curl -sSf "https://proxy.golang.org/github.com/arloliu/zapwire/otlp/@v/$(OTLP_LATEST_VER).info"
+	@echo
 
 ## ci: Full local gate
 ci: lint vet test coverage examples
