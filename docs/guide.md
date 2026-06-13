@@ -15,6 +15,7 @@ This guide walks through every concept and every knob. For a one-page reference,
 - [Encoder config & log level](#encoder-config--log-level)
 - [Fluent: three encoding paths](#fluent-three-encoding-paths)
 - [NDJSON](#ndjson)
+- [Syslog (RFC5424)](#syslog-rfc5424)
 - [OTLP](#otlp)
 - [Time codecs](#time-codecs)
 - [Sync vs Async](#sync-vs-async)
@@ -245,6 +246,137 @@ logger := zap.New(core)
 NDJSON has no timestamp codec to configure — the time is whatever zap's encoder writes (control it
 through the standard `EncoderConfig.TimeKey` / `EncoderConfig.EncodeTime`). `ndjson.NewWriter`
 exists too, for the bring-your-own-core pattern, and takes core zapwire options directly.
+
+---
+
+## Syslog (RFC5424)
+
+The `syslog` subpackage ships log entries as RFC5424 messages over UDS or TCP. Each entry
+becomes:
+
+```
+<PRI>1 TIMESTAMP HOSTNAME APP-NAME PROCID MSGID MSG
+```
+
+where `PRI` encodes the facility + severity and `MSG` is the JSON object produced by zap's
+encoder.
+
+### Quick start
+
+```go
+core, writer, err := syslog.NewCore(
+    zapwire.TCP("rsyslog:514"),
+    zap.InfoLevel,
+    zap.NewProductionEncoderConfig(),
+    syslog.WithAppName("myapp"),
+    syslog.WithFacility(syslog.LOCAL0),
+)
+if err != nil {
+    log.Fatal(err)
+}
+defer writer.Close()
+
+logger := zap.New(core)
+logger.Warn("disk pressure", zap.Int("pct", 92))
+// → <165>1 2026-06-13T… hostname myapp 12345 - {"level":"warn","ts":…,"msg":"disk pressure","pct":92}
+```
+
+### Header fields
+
+| Option | Default | RFC5424 field |
+|---|---|---|
+| `WithFacility(f)` | `LOCAL0` (20) | `FACILITY` in `PRI` |
+| `WithHostname(h)` | `os.Hostname()` | `HOSTNAME` |
+| `WithAppName(a)` | process name | `APP-NAME` |
+| `WithProcID(p)` | OS pid (string) | `PROCID` |
+| `WithMsgID(m)` | `"-"` (nil-value) | `MSGID` |
+
+An empty string for any header field becomes `"-"` per the spec. Values are truncated to
+the RFC5424 field-length limits (hostname 255, app-name 48, procid 128, msgid 32).
+
+Full facility list: `KERN`, `USER`, `MAIL`, `DAEMON`, `AUTH`, `SYSLOG`, `LPR`, `NEWS`,
+`UUCP`, `CRON`, `AUTHPRIV`, `FTP`, `NTP`, `LOGAUDIT`, `LOGALERT`, `CLOCK`,
+`LOCAL0`–`LOCAL7`.
+
+### Severity mapping
+
+zap levels map to syslog severities by default:
+
+| zap level | syslog severity | value |
+|---|---|---|
+| Debug | Debug | 7 |
+| Info | Informational | 6 |
+| Warn | Warning | 4 |
+| Error | Error | 3 |
+| DPanic | Critical | 2 |
+| Panic | Alert | 1 |
+| Fatal | Emergency | 0 |
+
+Override with `WithSeverityMapper`:
+
+```go
+syslog.WithSeverityMapper(func(l zapcore.Level) syslog.Severity {
+    if l >= zapcore.ErrorLevel {
+        return syslog.Critical
+    }
+    return syslog.Informational
+})
+```
+
+Mapper results are clamped to 0–7 per entry.
+
+### Framing
+
+TCP syslog streams need explicit framing (RFC 6587) so receivers locate message
+boundaries:
+
+- **`OctetCounting`** (default, RFC 6587 §3.4.1) — `"MSG-LEN SP SYSLOG-MSG"`. Unambiguous;
+  works with any MSG content including embedded newlines.
+- **`LFTerminated`** (RFC 6587 §3.4.2) — each message terminated by `\n`. Simpler, but safe
+  only when the MSG contains no embedded newline.
+
+```go
+syslog.WithFraming(syslog.LFTerminated)
+```
+
+### BOM
+
+`WithBOM(true)` prepends a UTF-8 BOM (`\xEF\xBB\xBF`) to the MSG, producing the
+RFC5424 `MSG-UTF8` form. Default off — a leading BOM trips naive JSON consumers (rsyslog,
+Vector) that parse the MSG body without stripping it first.
+
+### Bring-your-own core
+
+`NewWriter` and `NewEncoder` are the low-level constructors for tee/sampler compositions.
+Pass the same options list to both; each option writes only to the fields it owns.
+
+```go
+// Build the writer (framing + transport options apply).
+writer, err := syslog.NewWriter(zapwire.TCP("rsyslog:514"),
+    syslog.WithAppName("myapp"),
+    syslog.WithFacility(syslog.LOCAL0),
+    syslog.WithFraming(syslog.OctetCounting),
+    syslog.WithZapwireOptions(zapwire.WithAsyncMode()),
+)
+if err != nil {
+    log.Fatal(err)
+}
+defer writer.Close()
+
+// Build the encoder (header + severity + BOM options apply).
+enc := syslog.NewEncoder(zap.NewProductionEncoderConfig(),
+    syslog.WithAppName("myapp"),
+    syslog.WithFacility(syslog.LOCAL0),
+)
+
+core := zapwire.NewCore(enc, writer, zap.InfoLevel)
+logger := zap.New(core)
+```
+
+> `WithFraming` and `WithZapwireOptions` are no-ops on `NewEncoder`; `WithFacility`,
+> `WithHostname`, `WithAppName`, `WithProcID`, `WithMsgID`, `WithBOM`, and
+> `WithSeverityMapper` are no-ops on `NewWriter`. `NewCore` accepts the full option set and
+> routes each option to the right constructor internally.
 
 ---
 

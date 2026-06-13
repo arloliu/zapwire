@@ -10,23 +10,22 @@ and both modules adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## Unreleased
 
-### otlp
+## v1.0.0 — 2026-06-13
 
-- **Added:** OTLP/JSON encoding via `WithEncoding(otlp.JSON)` — spec-exact
-  JSON Protobuf Encoding on the HTTP transport (transcode at ship time; the
-  protobuf path is untouched). Construction error on the gRPC constructors.
-- **Added:** gRPC integration-test variants against real receivers: Fluent Bit
-  ingest + relay fidelity, Vector ingest, otel-collector TLS; OTLP/JSON
-  ingest against a real otel-collector.
-- **Changed (docs):** `WithMaxRequestBytes` documents that in JSON mode the
-  cap governs the protobuf-equivalent request size (JSON wire bodies run
-  1.5–3× larger).
+Stability release. No API changes since v0.1.0; this tag formalises the
+exported-API compatibility promise described in the README.
 
-### CI
+## otlp/v0.3.0 — 2026-06-13
 
-- otel-collector (otelcol-contrib 0.154.0) and Vector (0.56.0) integration
-  suites now run on every push/PR alongside the existing Fluent Bit (5.0.6)
-  suite.
+- **Added:** `WithEncoding(otlp.JSON)` — OTLP/JSON encoding on the HTTP
+  transport: spec-exact JSON Protobuf Encoding, `Content-Type: application/json`,
+  lowerCamelCase field names, lowercase-hex `traceId`/`spanId`, decimal-string
+  64-bit integers. The protobuf encode path is untouched; JSON mode pays one
+  extra transcode per batch. Construction error on the gRPC constructors
+  (OTLP/gRPC is protobuf-only by spec).
+- **Changed (docs):** `WithMaxRequestBytes` now documents that in JSON mode the
+  cap governs the protobuf-equivalent request size — JSON wire bodies are
+  1.5–3× larger; lower the cap accordingly when targeting a receiver body limit.
 
 ## otlp/v0.2.0 — 2026-06-13
 
