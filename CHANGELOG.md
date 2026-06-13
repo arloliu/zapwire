@@ -10,7 +10,7 @@ and both modules adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## Unreleased
 
-### otlp (v0.4.0)
+## otlp/v0.4.0 — 2026-06-13
 
 - **BREAKING:** removed `NewWriter` and `NewCore`. Use the protocol-explicit
   `NewHTTPWriter` / `NewHTTPCore` (exact drop-in replacements — OTLP/HTTP is the
