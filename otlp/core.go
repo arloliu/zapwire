@@ -62,36 +62,31 @@ func (c *core) Write(ent zapcore.Entry, fields []zapcore.Field) error {
 func (c *core) Sync() error { return c.out.Sync() }
 
 // NewEncoder builds the OTLP zapcore.Encoder. Only encoder-end options take
-// effect (design §3.6). Pair with NewWriter for a BYO-core setup — but note
-// the §2.2 compatibility matrix: behind a stock zapcore.NewCore, sticky
-// zap.Any("context", ctx) degrades to a stringified attribute; use NewCore
-// or the eager SpanContext helper.
+// effect (design §3.6). Pair with NewHTTPWriter for a BYO-core setup — but
+// note the §2.2 compatibility matrix: behind a stock zapcore.NewCore, sticky
+// zap.Any("context", ctx) degrades to a stringified attribute; use
+// NewHTTPCore/NewGRPCCore or the eager SpanContext helper.
 func NewEncoder(opts ...Option) zapcore.Encoder {
 	return newEncoder(applyOptions(opts))
 }
 
-// NewCore wires NewEncoder + NewWriter into the custom trace-aware core
-// (design §2.2) plus its Writer, which the caller must Close. One opts list
-// feeds all three ends (each option sets only the fields it owns).
-// Equivalent to NewHTTPCore.
+// NewHTTPCore wires NewEncoder + NewHTTPWriter into the custom trace-aware
+// core (design §2.2) plus its Writer, which the caller must Close. One opts
+// list feeds all three ends (each option sets only the fields it owns).
+// OTLP/HTTP is the spec's default protocol; this is the symmetric counterpart
+// of NewGRPCCore.
 //
 // Returns:
 //   - zapcore.Core: the OTLP core (sticky zap.Any("context", ctx) works here)
 //   - *Writer: the underlying exporter; the caller owns it and must Close it
-//   - error: a non-nil error from NewWriter (e.g. ErrNoEndpoint)
-func NewCore(endpoint string, level zapcore.LevelEnabler, opts ...Option) (zapcore.Core, *Writer, error) {
-	w, err := NewWriter(endpoint, opts...)
+//   - error: a non-nil error from NewHTTPWriter (e.g. ErrNoEndpoint)
+func NewHTTPCore(endpoint string, level zapcore.LevelEnabler, opts ...Option) (zapcore.Core, *Writer, error) {
+	w, err := NewHTTPWriter(endpoint, opts...)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	return newOTLPCore(newEncoder(applyOptions(opts)), w, level), w, nil
-}
-
-// NewHTTPCore is the explicit symmetric counterpart of NewGRPCCore; it is
-// exactly NewCore (OTLP/HTTP).
-func NewHTTPCore(endpoint string, level zapcore.LevelEnabler, opts ...Option) (zapcore.Core, *Writer, error) {
-	return NewCore(endpoint, level, opts...)
 }
 
 // NewGRPCCore wires NewEncoder + NewGRPCWriter into the custom trace-aware

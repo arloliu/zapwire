@@ -123,7 +123,7 @@ pipeline:
 
 	waitPortFB(t, port, waitCh, stderr)
 
-	core, w, err := NewCore(fmt.Sprintf("http://127.0.0.1:%d", port), zapcore.InfoLevel,
+	core, w, err := NewHTTPCore(fmt.Sprintf("http://127.0.0.1:%d", port), zapcore.InfoLevel,
 		WithServiceName("fbtest"), WithFlushInterval(50*time.Millisecond))
 	require.NoError(t, err)
 	logger := zap.New(core)
@@ -359,7 +359,7 @@ pipeline:
 
 	waitPortFB(t, inPort, waitCh, stderr)
 
-	core, w, err := NewCore(fmt.Sprintf("http://127.0.0.1:%d", inPort), zapcore.InfoLevel,
+	core, w, err := NewHTTPCore(fmt.Sprintf("http://127.0.0.1:%d", inPort), zapcore.InfoLevel,
 		WithServiceName("fbrelay"), WithFlushInterval(50*time.Millisecond))
 	require.NoError(t, err)
 	logger := zap.New(core)
@@ -482,7 +482,7 @@ pipeline:
 
 	waitPortFB(t, inPort, waitCh, stderr)
 
-	core, w, err := NewCore(fmt.Sprintf("http://127.0.0.1:%d", inPort), zapcore.InfoLevel,
+	core, w, err := NewHTTPCore(fmt.Sprintf("http://127.0.0.1:%d", inPort), zapcore.InfoLevel,
 		WithServiceName("fbrelay-grpc"), WithFlushInterval(50*time.Millisecond))
 	require.NoError(t, err)
 	logger := zap.New(core)

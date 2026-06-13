@@ -105,7 +105,7 @@ header-field options.
 ### OTLP/HTTP (protobuf)
 
 ```go
-core, w, err := otlp.NewCore("http://collector:4318", zapcore.InfoLevel,
+core, w, err := otlp.NewHTTPCore("http://collector:4318", zapcore.InfoLevel,
     otlp.WithServiceName("checkout"))
 if err != nil {
     log.Fatal(err)
@@ -134,7 +134,7 @@ Accepts bare `host:port` (TLS by default; `WithInsecure` for h2c), `http://` (h2
 ### OTLP/JSON
 
 ```go
-core, w, _ := otlp.NewCore("http://collector:4318", zapcore.InfoLevel,
+core, w, _ := otlp.NewHTTPCore("http://collector:4318", zapcore.InfoLevel,
     otlp.WithEncoding(otlp.JSON))     // spec JSON Protobuf Encoding (HTTP only)
 defer w.Close()
 ```
@@ -164,7 +164,7 @@ endpoint vars). Explicit and opt-in — zapwire never reads env variables behind
 // Per-call eager helper — works on any core:
 logger.Info("order placed", otlp.SpanContext(ctx))
 
-// Sticky — all calls on reqLog carry the span (otlp.NewCore only):
+// Sticky — all calls on reqLog carry the span (otlp cores only):
 reqLog := logger.With(zap.Any("context", ctx))
 reqLog.Info("payment authorised")
 
@@ -178,7 +178,7 @@ first-class correlation, not string attributes. See [Trace correlation](docs/gui
 ### Cost-control tee (OTel Warn+ only)
 
 ```go
-otelCore, w, _ := otlp.NewCore(endpoint, zapcore.WarnLevel,
+otelCore, w, _ := otlp.NewHTTPCore(endpoint, zapcore.WarnLevel,
     otlp.WithServiceName("checkout"))
 defer w.Close()
 

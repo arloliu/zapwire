@@ -6,7 +6,7 @@
 //
 // # Quick start
 //
-//	core, w, err := otlp.NewCore("http://collector:4318", zapcore.InfoLevel,
+//	core, w, err := otlp.NewHTTPCore("http://collector:4318", zapcore.InfoLevel,
 //	    otlp.WithServiceName("checkout"))
 //	if err != nil { ... }
 //	defer w.Close()
@@ -23,21 +23,22 @@
 // official contrib/bridges/otelzap convention) or the eager SpanContext
 // payload. Sticky With behavior depends on the core:
 //
-//	form                                  | otlp.NewCore | stock zapcore.NewCore
-//	per-call zap.Any("context", ctx)      | yes          | yes
-//	per-call otlp.SpanContext(ctx)        | yes          | yes
-//	With(otlp.SpanContext(ctx))           | yes          | yes
-//	With(zap.Any("context", ctx))         | yes          | NO — stringified attribute
+//	form                                  | otlp core | stock zapcore.NewCore
+//	per-call zap.Any("context", ctx)      | yes       | yes
+//	per-call otlp.SpanContext(ctx)        | yes       | yes
+//	With(otlp.SpanContext(ctx))           | yes       | yes
+//	With(zap.Any("context", ctx))         | yes       | NO — stringified attribute
 //
-// The stock-core limitation is structural: zap classifies contexts as
-// fmt.Stringer, so ioCore.With erases the value before any encoder hook.
-// Use otlp.NewCore (recommended) or the eager helper.
+// "otlp core" is either NewHTTPCore or NewGRPCCore — both wrap the same
+// trace-aware core. The stock-core limitation is structural: zap classifies
+// contexts as fmt.Stringer, so ioCore.With erases the value before any encoder
+// hook. Use otlp.NewHTTPCore/NewGRPCCore (recommended) or the eager helper.
 //
 // A second stock-core caveat: transactional rollback for FAILING zap.Inline
 // marshalers applied via With. ioCore.With dispatches InlineMarshalerType
 // straight into the encoder with no interception point, so a failing inline
 // marshaler's partial writes persist in the With-state — zap's own JSON and
-// console encoders behave identically there. otlp.NewCore rolls such
+// console encoders behave identically there. The otlp cores roll such
 // failures back cleanly; per-call fields are transactional on every core.
 //
 // In zapcore.NewTee setups, the OTHER cores receive trace-context fields as
@@ -48,10 +49,10 @@
 //
 // # Transports
 //
-// Two OTLP transports are provided. NewWriter/NewHTTPWriter (and
-// NewCore/NewHTTPCore) speak OTLP/HTTP — binary protobuf POSTed to /v1/logs,
-// default port 4318, the OTel spec's default protocol. NewGRPCWriter (and
-// NewGRPCCore) speak OTLP/gRPC — a unary LogsService/Export call, default
+// Two OTLP transports are provided. NewHTTPWriter (and NewHTTPCore) speak
+// OTLP/HTTP — binary protobuf POSTed to /v1/logs, default port 4318, the OTel
+// spec's default protocol. NewGRPCWriter (and NewGRPCCore) speak OTLP/gRPC — a
+// unary LogsService/Export call, default
 // port 4317, implemented with a hand-rolled stdlib HTTP/2 client (no grpc-go
 // dependency). ProtocolFromEnv reads OTEL_EXPORTER_OTLP_[LOGS_]PROTOCOL for
 // env-driven dispatch between them.

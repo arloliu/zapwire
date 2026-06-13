@@ -39,7 +39,7 @@ func shipAndCapture(t *testing.T, enc otlp.Encoding) []byte {
 	}))
 	defer srv.Close()
 
-	core, w, err := otlp.NewCore(srv.URL, zapcore.DebugLevel,
+	core, w, err := otlp.NewHTTPCore(srv.URL, zapcore.DebugLevel,
 		otlp.WithEncoding(enc),
 		otlp.WithServiceName("json-conf"),
 		otlp.WithResource(zap.String("deployment.environment.name", "test")),

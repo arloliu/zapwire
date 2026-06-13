@@ -433,15 +433,15 @@ func TestJSONRetryTranscodesOnce(t *testing.T) {
 // constructors, the zero value is Protobuf, and NewEncoder ignores the
 // option entirely.
 func TestEncodingConstructorMatrix(t *testing.T) {
-	w, err := NewWriter("http://127.0.0.1:1")
+	w, err := NewHTTPWriter("http://127.0.0.1:1")
 	require.NoError(t, err, "zero value (Protobuf) must construct")
 	require.NoError(t, w.Close())
 
-	w, err = NewWriter("http://127.0.0.1:1", WithEncoding(JSON))
+	w, err = NewHTTPWriter("http://127.0.0.1:1", WithEncoding(JSON))
 	require.NoError(t, err, "JSON must construct on HTTP")
 	require.NoError(t, w.Close())
 
-	_, err = NewWriter("http://127.0.0.1:1", WithEncoding(Encoding(255)))
+	_, err = NewHTTPWriter("http://127.0.0.1:1", WithEncoding(Encoding(255)))
 	require.ErrorContains(t, err, "undefined Encoding")
 
 	_, _, err = NewHTTPCore("http://127.0.0.1:1", zapcore.InfoLevel, WithEncoding(Encoding(7)))
@@ -477,7 +477,7 @@ func TestJSONWriterEndToEnd(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	w, err := NewWriter(srv.URL, WithEncoding(JSON), WithServiceName("jtest"),
+	w, err := NewHTTPWriter(srv.URL, WithEncoding(JSON), WithServiceName("jtest"),
 		WithFlushInterval(10*time.Millisecond))
 	require.NoError(t, err)
 	rec := encodeRecord(t, NewEncoder(), testEntry())

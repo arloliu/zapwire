@@ -141,14 +141,15 @@ func (w *Writer) export(records [][]byte, allowRetry bool) {
 	}
 }
 
-// NewWriter builds the OTLP/HTTP exporter and starts its flush goroutine.
-// Equivalent to NewHTTPWriter. The caller owns the Writer and must Close it.
-// Only writer/envelope-end options take effect (design §6).
+// NewHTTPWriter builds the OTLP/HTTP exporter and starts its flush goroutine.
+// OTLP/HTTP (binary protobuf) is the spec's default protocol; this is the
+// symmetric counterpart of NewGRPCWriter. The caller owns the Writer and must
+// Close it. Only writer/envelope-end options take effect (design §6).
 //
 // Returns:
 //   - *Writer: the exporter; satisfies zapcore.WriteSyncer
 //   - error: ErrNoEndpoint or an endpoint validation error
-func NewWriter(endpoint string, opts ...Option) (*Writer, error) {
+func NewHTTPWriter(endpoint string, opts ...Option) (*Writer, error) {
 	o := applyOptions(opts)
 	tr, err := newHTTPTransport(endpoint, o)
 	if err != nil {
@@ -158,16 +159,6 @@ func NewWriter(endpoint string, opts ...Option) (*Writer, error) {
 	go w.run()
 
 	return w, nil
-}
-
-// NewHTTPWriter is the explicit symmetric counterpart of NewGRPCWriter; it
-// is exactly NewWriter (OTLP/HTTP, the spec's default protocol).
-//
-// Returns:
-//   - *Writer: the exporter; satisfies zapcore.WriteSyncer
-//   - error: ErrNoEndpoint or an endpoint validation error
-func NewHTTPWriter(endpoint string, opts ...Option) (*Writer, error) {
-	return NewWriter(endpoint, opts...)
 }
 
 // NewGRPCWriter builds the OTLP/gRPC exporter and starts its flush

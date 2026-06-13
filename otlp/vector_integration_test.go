@@ -87,7 +87,7 @@ sinks:
 	defer func() { cancel(); _ = cmd.Wait() }()
 	waitPortVec(t, httpPort)
 
-	core, w, err := NewCore(fmt.Sprintf("http://127.0.0.1:%d", httpPort), zapcore.InfoLevel,
+	core, w, err := NewHTTPCore(fmt.Sprintf("http://127.0.0.1:%d", httpPort), zapcore.InfoLevel,
 		WithServiceName("vtest"), WithFlushInterval(50*time.Millisecond))
 	require.NoError(t, err)
 	logger := zap.New(core)

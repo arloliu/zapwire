@@ -72,7 +72,7 @@ func countRecords(req []byte) int {
 func newStartedWriter(t *testing.T, url string, opts ...Option) *Writer {
 	t.Helper()
 	opts = append([]Option{WithRetry(fastRetry)}, opts...)
-	w, err := NewWriter(url, opts...)
+	w, err := NewHTTPWriter(url, opts...)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = w.Close() })
 
@@ -80,9 +80,9 @@ func newStartedWriter(t *testing.T, url string, opts ...Option) *Writer {
 }
 
 func TestNewWriterValidation(t *testing.T) {
-	_, err := NewWriter("")
+	_, err := NewHTTPWriter("")
 	require.ErrorIs(t, err, ErrNoEndpoint)
-	_, err = NewWriter("not-a-url")
+	_, err = NewHTTPWriter("not-a-url")
 	require.Error(t, err)
 }
 
@@ -230,7 +230,7 @@ func TestCloseDuringRetryAfterSleep(t *testing.T) {
 	srv := httptest.NewServer(rc.handler())
 	defer srv.Close()
 
-	w, err := NewWriter(srv.URL,
+	w, err := NewHTTPWriter(srv.URL,
 		WithRetry(RetryConfig{Initial: time.Millisecond, MaxInterval: time.Second, MaxElapsed: time.Hour}),
 		WithBatchSize(1), WithFlushInterval(time.Millisecond))
 	require.NoError(t, err)
@@ -248,7 +248,7 @@ func TestCloseDrainsSingleAttempt(t *testing.T) {
 	srv := httptest.NewServer(rc.handler())
 	defer srv.Close()
 
-	w, err := NewWriter(srv.URL, WithRetry(fastRetry), WithBatchSize(2), WithFlushInterval(time.Hour))
+	w, err := NewHTTPWriter(srv.URL, WithRetry(fastRetry), WithBatchSize(2), WithFlushInterval(time.Hour))
 	require.NoError(t, err)
 	for range 5 {
 		_, _ = w.Write([]byte{0x10, 0x09})
@@ -286,7 +286,7 @@ func TestCloseDrainByteCutAgainstFailingBackend(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	w, err := NewWriter(srv.URL, WithRetry(fastRetry), WithQueueSize(8),
+	w, err := NewHTTPWriter(srv.URL, WithRetry(fastRetry), WithQueueSize(8),
 		WithMaxRequestBytes(300), WithFlushInterval(time.Millisecond),
 		WithTimeout(5*time.Second))
 	require.NoError(t, err)
@@ -322,7 +322,7 @@ func TestErrorHandlerMayCallClose(t *testing.T) {
 
 	var w *Writer
 	var err error
-	w, err = NewWriter(srv.URL, WithRetry(fastRetry), WithMaxRequestBytes(128),
+	w, err = NewHTTPWriter(srv.URL, WithRetry(fastRetry), WithMaxRequestBytes(128),
 		WithErrorHandler(func(error) { _ = w.Close() }))
 	require.NoError(t, err)
 	donec := make(chan struct{})
@@ -351,7 +351,7 @@ func TestCloseWhileRequestInFlight(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	w, err := NewWriter(srv.URL, WithRetry(fastRetry),
+	w, err := NewHTTPWriter(srv.URL, WithRetry(fastRetry),
 		WithBatchSize(1), WithFlushInterval(time.Millisecond), WithTimeout(5*time.Second))
 	require.NoError(t, err)
 	_, _ = w.Write([]byte{0x10, 0x09})
@@ -370,7 +370,7 @@ func TestPostCloseWritesUncounted(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	w, err := NewWriter(srv.URL, WithRetry(fastRetry))
+	w, err := NewHTTPWriter(srv.URL, WithRetry(fastRetry))
 	require.NoError(t, err)
 	require.NoError(t, w.Close())
 	require.NoError(t, w.Close()) // idempotent
@@ -391,7 +391,7 @@ func TestConcurrentWriteSyncClose(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			w, err := NewWriter(srv.URL, WithRetry(fastRetry), WithFlushInterval(time.Millisecond))
+			w, err := NewHTTPWriter(srv.URL, WithRetry(fastRetry), WithFlushInterval(time.Millisecond))
 			require.NoError(t, err)
 			var wg sync.WaitGroup
 			for range 8 {
@@ -416,7 +416,7 @@ func TestNewCoreEndToEnd(t *testing.T) {
 	srv := httptest.NewServer(rc.handler())
 	defer srv.Close()
 
-	core, w, err := NewCore(srv.URL, zapcore.InfoLevel, WithServiceName("e2e"), WithRetry(fastRetry))
+	core, w, err := NewHTTPCore(srv.URL, zapcore.InfoLevel, WithServiceName("e2e"), WithRetry(fastRetry))
 	require.NoError(t, err)
 	logger := zap.New(core)
 	_, ctx := testSpanContext(t)

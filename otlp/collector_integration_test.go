@@ -66,7 +66,7 @@ service:
 	defer func() { cancel(); _ = cmd.Wait() }()
 	waitPort(t, port)
 
-	core, w, err := NewCore(fmt.Sprintf("http://127.0.0.1:%d", port), zapcore.InfoLevel,
+	core, w, err := NewHTTPCore(fmt.Sprintf("http://127.0.0.1:%d", port), zapcore.InfoLevel,
 		WithServiceName("itest"), WithFlushInterval(50*time.Millisecond))
 	require.NoError(t, err)
 	logger := zap.New(core)
@@ -217,7 +217,7 @@ service:
 	defer func() { cancel(); _ = cmd.Wait() }()
 	waitPort(t, port)
 
-	core, w, err := NewCore(fmt.Sprintf("http://127.0.0.1:%d", port), zapcore.InfoLevel,
+	core, w, err := NewHTTPCore(fmt.Sprintf("http://127.0.0.1:%d", port), zapcore.InfoLevel,
 		WithEncoding(JSON),
 		WithServiceName("itest-json"), WithFlushInterval(50*time.Millisecond))
 	require.NoError(t, err)

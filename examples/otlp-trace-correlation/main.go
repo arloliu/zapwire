@@ -40,7 +40,7 @@ func main() {
 		endpoint = "http://127.0.0.1:4318"
 	}
 
-	core, w, err := otlp.NewCore(
+	core, w, err := otlp.NewHTTPCore(
 		endpoint,
 		zapcore.InfoLevel,
 		otlp.WithServiceName("checkout"),
@@ -52,7 +52,7 @@ func main() {
 		}),
 	)
 	if err != nil {
-		log.Fatalf("otlp.NewCore: %v", err)
+		log.Fatalf("otlp.NewHTTPCore: %v", err)
 	}
 
 	// Build a sample trace context the way the package tests do: literal IDs +
@@ -71,7 +71,7 @@ func main() {
 	// Form 1: per-call eager helper — always works regardless of core type.
 	logger.Info("order placed", otlp.SpanContext(ctx), zap.String("order_id", "ord-1"))
 
-	// Form 2: sticky context — works on otlp.NewCore because the custom core
+	// Form 2: sticky context — works on otlp.NewHTTPCore because the custom core
 	// pre-scans With fields before zap's field dispatch can stringify ctx.
 	reqLog := logger.With(zap.Any("context", ctx))
 	reqLog.Info("payment authorised", zap.Float64("amount", 19.99))

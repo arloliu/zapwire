@@ -10,6 +10,16 @@ and both modules adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## Unreleased
 
+### otlp (v0.4.0)
+
+- **BREAKING:** removed `NewWriter` and `NewCore`. Use the protocol-explicit
+  `NewHTTPWriter` / `NewHTTPCore` (exact drop-in replacements — OTLP/HTTP is the
+  spec's default protocol) or `NewGRPCWriter` / `NewGRPCCore`. This removes the
+  ambiguous aliases ahead of the otlp module's v1.0.0 API freeze, leaving one
+  constructor name per transport (`NewHTTP*` / `NewGRPC*`). Migration is a
+  rename: `otlp.NewCore(` → `otlp.NewHTTPCore(`, `otlp.NewWriter(` →
+  `otlp.NewHTTPWriter(`.
+
 ## v1.0.0 — 2026-06-13
 
 Stability release. No API changes since v0.1.0; this tag formalises the

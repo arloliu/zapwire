@@ -227,7 +227,7 @@ func TestFullRequestRoundTrip(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	core, w, err := otlp.NewCore(srv.URL, zapcore.DebugLevel,
+	core, w, err := otlp.NewHTTPCore(srv.URL, zapcore.DebugLevel,
 		otlp.WithServiceName("conf-svc"),
 		otlp.WithResource(zap.String("deployment.environment.name", "test")),
 		otlp.WithScopeName("conformance"), otlp.WithScopeVersion("v1"))

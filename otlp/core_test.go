@@ -174,7 +174,7 @@ func TestStockCoreWithInlineFailurePinsZapBehavior(t *testing.T) {
 	// standard partial-write behavior (ioCore.With dispatches inline
 	// marshalers directly into the encoder — no interception point; zap's
 	// own encoders behave identically). This test PINS that documented
-	// degradation; on otlp.NewCore the same shape rolls back cleanly.
+	// degradation; on the otlp core the same shape rolls back cleanly.
 	stockSink := &memSink{}
 	stock := zapcore.NewCore(NewEncoder(), stockSink, zapcore.DebugLevel)
 	zap.New(stock).With(zap.Inline(failObj{partial: true})).Info("m")

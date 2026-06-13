@@ -1,7 +1,7 @@
 // Command otlp-tee-cost-control shows how to control OTel storage costs by
 // gating the OTLP core at Warn+ while keeping a cheap console core at Info.
 //
-// The key lever is the LevelEnabler passed to otlp.NewCore: entries below the
+// The key lever is the LevelEnabler passed to otlp.NewHTTPCore: entries below the
 // level are rejected in Check before any encoding, queueing, or network work
 // occurs.  A zap.AtomicLevel makes the gate adjustable at runtime — useful
 // during incidents when you temporarily want richer signal in OTel.
@@ -39,7 +39,7 @@ func main() {
 	// required.  AtomicLevel also implements http.Handler for remote control.
 	otelLvl := zap.NewAtomicLevelAt(zapcore.WarnLevel)
 
-	otelCore, w, err := otlp.NewCore(
+	otelCore, w, err := otlp.NewHTTPCore(
 		endpoint,
 		otelLvl,
 		otlp.WithServiceName("checkout"),
@@ -52,7 +52,7 @@ func main() {
 		}),
 	)
 	if err != nil {
-		log.Fatalf("otlp.NewCore: %v", err)
+		log.Fatalf("otlp.NewHTTPCore: %v", err)
 	}
 
 	// Console core: human-readable, Info and above — the "cheap" sink.

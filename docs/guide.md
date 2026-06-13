@@ -397,7 +397,7 @@ sections do not apply to it. Delivery semantics are described
 ### Quick start
 
 ```go
-core, w, err := otlp.NewCore("http://collector:4318", zapcore.InfoLevel,
+core, w, err := otlp.NewHTTPCore("http://collector:4318", zapcore.InfoLevel,
     otlp.WithServiceName("checkout"))
 if err != nil {
     log.Fatal(err)
@@ -416,16 +416,17 @@ proto fields — first-class correlation, not string attributes.
 
 **Compatibility matrix** (condensed from `otlp/doc.go`):
 
-| Form | `otlp.NewCore` | stock `zapcore.NewCore` |
+| Form | otlp core | stock `zapcore.NewCore` |
 |---|---|---|
 | per-call `zap.Any("context", ctx)` | yes | yes |
 | per-call `otlp.SpanContext(ctx)` | yes | yes |
 | `With(otlp.SpanContext(ctx))` | yes | yes |
 | `With(zap.Any("context", ctx))` | yes | **NO** — stringified attribute |
 
-The stock-core limitation is structural: zap classifies contexts as
-`fmt.Stringer`, so `ioCore.With` erases the value before any encoder hook.
-`otlp.NewCore` pre-scans `With` fields before dispatch to avoid this.
+The "otlp core" column is either `NewHTTPCore` or `NewGRPCCore` — both wrap the
+same trace-aware core. The stock-core limitation is structural: zap classifies
+contexts as `fmt.Stringer`, so `ioCore.With` erases the value before any encoder
+hook. The otlp core pre-scans `With` fields before dispatch to avoid this.
 
 **Three correlation forms:**
 
@@ -434,7 +435,7 @@ The stock-core limitation is structural: zap classifies contexts as
 logger.Info("order placed", otlp.SpanContext(ctx))
 
 // Form 2: sticky — attach once, all subsequent calls on reqLog carry the span.
-// Works on otlp.NewCore — the custom core pre-scans With fields.
+// Works on the otlp core (NewHTTPCore/NewGRPCCore) — it pre-scans With fields.
 reqLog := logger.With(zap.Any("context", ctx))
 reqLog.Info("payment authorised")
 
@@ -602,7 +603,7 @@ The most common deployment pairs a cheap sink (console, EFK, Loki via another co
 onto an existing logger and `zapcore.NewTee` to fan out:
 
 ```go
-otelCore, w, err := otlp.NewCore(endpoint, zapcore.WarnLevel,
+otelCore, w, err := otlp.NewHTTPCore(endpoint, zapcore.WarnLevel,
     otlp.WithServiceName("checkout"))
 if err != nil { /* handle */ }
 defer w.Close()
@@ -620,7 +621,7 @@ turn without restarting:
 ```go
 lvl := zap.NewAtomicLevelAt(zapcore.WarnLevel)
 
-otelCore, w, err := otlp.NewCore(endpoint, lvl,
+otelCore, w, err := otlp.NewHTTPCore(endpoint, lvl,
     otlp.WithServiceName("checkout"))
 // ...
 
