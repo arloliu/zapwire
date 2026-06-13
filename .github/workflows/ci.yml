@@ -101,19 +101,13 @@ jobs:
             echo "::error::incompatible API changes in the root module"; exit 1
           fi
 
-      # TEMPORARY (otlp/v0.4.0): NewWriter/NewCore were removed pre-v1 — a
-      # DELIBERATE breaking change (see CHANGELOG "otlp (v0.4.0)"). gorelease
-      # reports "incompatible changes" against the v0.3.0 base until v0.4.0 is
-      # tagged, at which point HEAD matches the base and the break is gone.
-      # This step still runs and prints the diff, but does not fail the job.
-      # RESTORE the hard `exit 1` in the commit after otlp/v0.4.0 is released.
       - name: gorelease (otlp module)
         working-directory: otlp
         run: |
           out=$(go run golang.org/x/exp/cmd/gorelease@latest 2>&1) || true
           echo "$out"
           if echo "$out" | grep -q "incompatible changes"; then
-            echo "::warning::expected incompatible API changes in otlp (pre-v1 v0.4.0 removal of NewWriter/NewCore); gate relaxed until the tag lands"
+            echo "::error::incompatible API changes in the otlp module"; exit 1
           fi
 
   integration:
