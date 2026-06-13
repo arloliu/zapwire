@@ -282,12 +282,22 @@ func (e *msgpackEncoder) AddTime(k string, v time.Time)         { e.addKey(k); e
 // --- container / reflected Add* (stubs; filled in Tasks 5–6) ---------------------------------
 
 func (e *msgpackEncoder) AddObject(key string, obj zapcore.ObjectMarshaler) error {
+	// Check the depth cap BEFORE addKey: addKey writes the key and bumps the map
+	// pair count, so a cap error raised inside AppendObject would otherwise seal
+	// a map with a keyed-but-valueless pair (malformed msgpack). AppendObject
+	// re-checks at the same stack depth, so the value is always written.
+	if len(e.stack) >= maxEncodeDepth {
+		return errMaxEncodeDepth
+	}
 	e.addKey(key)
 
 	return e.AppendObject(obj)
 }
 
 func (e *msgpackEncoder) AddArray(key string, arr zapcore.ArrayMarshaler) error {
+	if len(e.stack) >= maxEncodeDepth {
+		return errMaxEncodeDepth // before addKey: keep the map pair balanced
+	}
 	e.addKey(key)
 
 	return e.AppendArray(arr)

@@ -33,8 +33,11 @@ func (d deepArray) MarshalLogArray(enc zapcore.ArrayEncoder) error {
 }
 
 // TestEncoderDepthCapNoCrash drives marshalers far past the depth cap through
-// EncodeEntry. With the guard they return an <key>Error field; without it the
-// goroutine stack would exhaust (a fatal, unrecoverable throw).
+// EncodeEntry. With the guard the over-depth field degrades to a <key>Error and
+// the entry ships as VALID msgpack; without it the goroutine stack would exhaust
+// (a fatal, unrecoverable throw). decodeEntryRecord fully decodes the result, so
+// a malformed map (e.g. a keyed-but-valueless pair from a mis-placed guard)
+// fails the decode rather than passing vacuously.
 func TestEncoderDepthCapNoCrash(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -44,11 +47,8 @@ func TestEncoderDepthCapNoCrash(t *testing.T) {
 		{"array", zap.Array("root", deepArray{n: maxEncodeDepth * 10})},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			enc := newMsgpackEncoder(minimalCfg())
-			buf, err := enc.EncodeEntry(zapcore.Entry{}, []zapcore.Field{tc.field})
-			require.NoError(t, err) // entry still ships; the field degrades to <key>Error
-			require.NotNil(t, buf)
-			require.NotZero(t, buf.Len())
+			rec := decodeEntryRecord(t, newMsgpackEncoder(minimalCfg()), zapcore.Entry{}, []zapcore.Field{tc.field})
+			require.Contains(t, rec, "rootError", "over-depth field degrades to <key>Error in valid msgpack")
 		})
 	}
 }

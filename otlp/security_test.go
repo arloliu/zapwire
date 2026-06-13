@@ -110,18 +110,21 @@ func TestWithDrainTimeoutBoundsSync(t *testing.T) {
 // TestUserHeadersCannotOverrideContentType pins that WithHeaders cannot clobber
 // the transport-owned Content-Type/Content-Encoding (a mismatch would make the
 // receiver misparse the body), while ordinary custom headers still pass through.
+// The Content-Encoding case matters with the DEFAULT no-compression: a stale
+// user "gzip" must be stripped so the receiver does not gunzip a plain body.
 func TestUserHeadersCannotOverrideContentType(t *testing.T) {
-	var gotCT, gotCustom string
+	var gotCT, gotCE, gotCustom string
 	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		gotCT = r.Header.Get("Content-Type")
+		gotCE = r.Header.Get("Content-Encoding")
 		gotCustom = r.Header.Get("X-Custom")
 		rw.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
 	w, err := NewHTTPWriter(srv.URL,
-		WithHeaders(map[string]string{"Content-Type": "text/evil", "X-Custom": "ok"}),
-		WithFlushInterval(time.Hour))
+		WithHeaders(map[string]string{"Content-Type": "text/evil", "Content-Encoding": "gzip", "X-Custom": "ok"}),
+		WithFlushInterval(time.Hour)) // default: no compression
 	require.NoError(t, err)
 	defer func() { _ = w.Close() }()
 
@@ -129,5 +132,6 @@ func TestUserHeadersCannotOverrideContentType(t *testing.T) {
 	require.NoError(t, w.Sync())
 
 	require.Equal(t, "application/x-protobuf", gotCT, "transport Content-Type must win over WithHeaders")
+	require.Empty(t, gotCE, "stale user Content-Encoding must be stripped when the body is uncompressed")
 	require.Equal(t, "ok", gotCustom, "non-reserved custom headers still pass through")
 }

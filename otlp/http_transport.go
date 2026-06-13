@@ -96,8 +96,13 @@ func (t *httpTransport) attempt(p prepared) (*acceptance, *ExportError) {
 		ct = "application/json"
 	}
 	req.Header.Set("Content-Type", ct)
+	// Own Content-Encoding in BOTH directions: a user-supplied value must never
+	// describe a body it doesn't match (an uncompressed body tagged gzip makes
+	// the receiver misparse it). Del covers the default no-compression case.
 	if p.compressed {
 		req.Header.Set("Content-Encoding", "gzip")
+	} else {
+		req.Header.Del("Content-Encoding")
 	}
 	resp, err := t.client.Do(req)
 	if err != nil {
