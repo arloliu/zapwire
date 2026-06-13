@@ -97,9 +97,55 @@ jobs:
         env:
           ZAPWIRE_FLUENT_BIT_BIN: /opt/fluent-bit/bin/fluent-bit
 
-      # Proves zapwire's OTLP/HTTP exporter is ingested by Fluent Bit's
-      # `opentelemetry` input end to end, reusing the binary installed above.
+      # Proves zapwire's OTLP exporters (HTTP and gRPC, both directions:
+      # ingest + relay fidelity) interoperate with Fluent Bit's
+      # `opentelemetry` input/output, reusing the binary installed above.
       - name: Integration tests (Fluent Bit OTLP)
         run: make integration-fluentbit
         env:
           ZAPWIRE_FLUENT_BIT_BIN: /opt/fluent-bit/bin/fluent-bit
+
+  integration-otlp:
+    name: Integration (otel-collector, Vector)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            otlp/go.sum
+
+      # Pin both receiver versions so an upstream release can never change the
+      # behavior our assertions match; bump them deliberately. otelcol-contrib
+      # (not core) because the tests use the `file` exporter, which only ships
+      # in the contrib distribution.
+      - name: Install otel-collector
+        run: |
+          curl -fsSL -o /tmp/otelcol.tar.gz \
+            https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v0.154.0/otelcol-contrib_0.154.0_linux_amd64.tar.gz
+          tar -xzf /tmp/otelcol.tar.gz -C /tmp otelcol-contrib
+          /tmp/otelcol-contrib --version
+
+      - name: Install Vector
+        run: |
+          curl -fsSL -o /tmp/vector.tar.gz \
+            https://github.com/vectordotdev/vector/releases/download/v0.56.0/vector-0.56.0-x86_64-unknown-linux-gnu.tar.gz
+          tar -xzf /tmp/vector.tar.gz -C /tmp
+          /tmp/vector-x86_64-unknown-linux-gnu/bin/vector --version
+
+      # OTLP/HTTP + OTLP/gRPC (h2c and TLS) against a real otel-collector.
+      - name: Integration tests (otel-collector)
+        run: make integration-otel
+        env:
+          OTELCOL_BIN: /tmp/otelcol-contrib
+
+      # OTLP/HTTP + OTLP/gRPC against a real Vector `opentelemetry` source.
+      - name: Integration tests (Vector)
+        run: make integration-vector
+        env:
+          VECTOR_BIN: /tmp/vector-x86_64-unknown-linux-gnu/bin/vector
