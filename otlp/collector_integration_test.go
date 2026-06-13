@@ -176,6 +176,71 @@ service:
 	}, 15*time.Second, 200*time.Millisecond, "record with trace IDs must reach the collector over gRPC")
 }
 
+// TestCollectorEndToEndJSON ships WithEncoding(JSON) output to a real
+// otel-collector OTLP/HTTP receiver — proving a real receiver ingests the
+// OTLP/JSON encoding (Content-Type application/json) with intact trace IDs,
+// the same file-exporter oracle as the protobuf variant.
+func TestCollectorEndToEndJSON(t *testing.T) {
+	bin := os.Getenv("OTELCOL_BIN")
+	if bin == "" {
+		bin = "/usr/local/bin/otelcol"
+	}
+	if _, err := os.Stat(bin); err != nil {
+		t.Skipf("otel-collector binary not found at %s", bin)
+	}
+
+	dir := t.TempDir()
+	outFile := filepath.Join(dir, "out.json")
+	port := freePort(t)
+	cfg := fmt.Sprintf(`
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 127.0.0.1:%d
+exporters:
+  file:
+    path: %s
+service:
+  pipelines:
+    logs:
+      receivers: [otlp]
+      exporters: [file]
+`, port, outFile)
+	cfgFile := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(cfgFile, []byte(cfg), 0o644))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "--config", cfgFile)
+	require.NoError(t, cmd.Start())
+	defer func() { cancel(); _ = cmd.Wait() }()
+	waitPort(t, port)
+
+	core, w, err := NewCore(fmt.Sprintf("http://127.0.0.1:%d", port), zapcore.InfoLevel,
+		WithEncoding(JSON),
+		WithServiceName("itest-json"), WithFlushInterval(50*time.Millisecond))
+	require.NoError(t, err)
+	logger := zap.New(core)
+	sc, sctx := testSpanContext(t)
+	logger.Info("json end to end", zap.String("k", "v"), SpanContext(sctx))
+	require.NoError(t, w.Sync())
+	require.NoError(t, w.Close())
+
+	require.Eventually(t, func() bool {
+		data, err := os.ReadFile(outFile)
+		if err != nil {
+			return false
+		}
+		s := strings.ToLower(string(data))
+
+		return strings.Contains(s, "json end to end") &&
+			strings.Contains(s, strings.ToLower(sc.TraceID().String())) &&
+			strings.Contains(s, strings.ToLower(sc.SpanID().String())) &&
+			strings.Contains(s, "itest-json")
+	}, 15*time.Second, 200*time.Millisecond, "JSON-encoded record with trace IDs must reach the collector")
+}
+
 // TestCollectorEndToEndGRPCTLS ships through NewGRPCCore to a real
 // otel-collector OTLP/gRPC receiver behind TLS (self-signed leaf generated
 // in-test). The bare host:port endpoint exercises the spec-default secure
